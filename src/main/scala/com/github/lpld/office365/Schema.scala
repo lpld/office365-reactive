@@ -1,43 +1,38 @@
 package com.github.lpld.office365
 
+import scala.reflect.runtime.universe._
+
 /**
+  * Schema represents a set of properties of the entity [[T]]
+  *
   * @author leopold
   * @since 14/05/18
   */
-abstract class Schema {
-  private var properties: List[Property] = Nil
+case class Schema[T](standardProperties: Seq[String], extendedProperties: List[ExtendedProperty])
 
-  protected def prop(name: String): Property = {
-    val prop = StandardProperty(name)
-    properties ::= prop
-    prop
+object Schema {
+
+  private val reservedPropertyNames = Set("SingleValueExtendedProperties")
+
+  /**
+    * Generate schema for a type [[T]]. List of standard properties will be automatically discovered from case-class
+    * property names. Optionally, a list of extended properties can be passed.
+    */
+  def apply[T: TypeTag](extendedProperties: ExtendedProperty*): Schema[T] = {
+
+    val stdProperties = typeOf[T]
+      .members
+      .collect {
+        case m: MethodSymbol if m.isVal && m.isCaseAccessor =>
+          m.name.decodedName.toString
+      }
+      .filterNot(reservedPropertyNames.contains)
+      .toList
+
+    Schema(stdProperties, extendedProperties.toList)
   }
+
+  def apply[T: TypeTag]: Schema[T] = apply[T]()
 }
 
-object MessageSchema extends Schema {
-  val Id = prop("Id")
-  val BccRecipients = prop("BccRecipients")
-  val Body = prop("Body")
-  val BodyPreview = prop("BodyPreview")
-  val Categories = prop("Categories")
-  val CcRecipients = prop("CcRecipients")
-  val ConversationId = prop("ConversationId")
-  val CreatedDateTime = prop("CreatedDateTime")
-  val From = prop("From")
-  val HasAttachments = prop("HasAttachments")
-  val IsDraft = prop("IsDraft")
-  val LastModifiedDateTime = prop("LastModifiedDateTime")
-  val ParentFolderId = prop("ParentFolderId")
-  val ReceivedDateTime = prop("ReceivedDateTime")
-  val ReplyTo = prop("ReplyTo")
-  val Sender = prop("Sender")
-  val SentDateTime = prop("SentDateTime")
-  val Subject = prop("Subject")
-  val ToRecipients = prop("ToRecipients")
-}
-
-abstract class Property(name: String)
-
-case class StandardProperty(name: String) extends Property(name)
-
-case class ExtendedProperty(name: String, definition: String) extends Property(name)
+case class ExtendedProperty(name: String, propertyId: String)

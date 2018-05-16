@@ -8,18 +8,48 @@ import play.api.libs.json.Json
   * @author leopold
   * @since 14/05/18
   */
-class Entity[-T](val apiPath: String, val schema: Schema)
+case class Path[-T](apiPath: String)
 
-trait OMessage {
+object Path {
+  implicit val messages = Path[OMessage]("/messages")
+  implicit val folders = Path[OMailFolder]("/folders")
 }
 
-object Entity {
+trait Model
 
-  implicit val messages: Entity[OMessage] = new Entity[OMessage]("/messages", MessageSchema)
+trait Entity extends Model
+
+trait OMessage extends Entity
+trait OMailFolder extends Entity
+
+// Common objects:
+case class Body(ContentType: String, Content: String) extends Model
+case class EmailAddress(Address: Option[String], Name: Option[String]) extends Model
+case class EmailContact(EmailAddress: EmailAddress) extends Model
+case class SingleValueProperty(PropertyId: String, Value: String) extends Model
+
+object Model {
+  implicit val bodyReads = Json.reads[Body]
+  implicit val emailAddressReads = Json.reads[EmailAddress]
+  implicit val emailContactReads = Json.reads[EmailContact]
+  implicit val singleValuePropertyReads = Json.reads[SingleValueProperty]
+}
+
+/**
+  * Extended properties support
+  */
+trait ExtendedPropertiesSupport {
+  protected def SingleValueExtendedProperties: List[SingleValueProperty]
+
+  private lazy val singleValueProps = SingleValueExtendedProperties
+    .groupBy(_.PropertyId)
+    .mapValues(_.head.Value)
+
+  def getProp(prop: ExtendedProperty): Option[String] = singleValueProps.get(prop.propertyId)
 }
 
 // todo: add all properties
-case class OMessageFull
+case class Message
 (
   Id: String,
   Subject: String,
@@ -28,14 +58,14 @@ case class OMessageFull
 
 ) extends OMessage
 
-object OMessageFull {
-  implicit val reads = Json.reads[OMessageFull]
+object Message {
+  implicit val reads = Json.reads[Message]
+  implicit val schema = Schema[Message]
 }
 
-case class OMessageIdOnly(Id: String) extends OMessage
+case class MessageIdOnly(Id: String) extends OMessage
 
-object OMessageIdOnly {
-  implicit val reads = Json.reads[OMessageIdOnly]
+object MessageIdOnly {
+  implicit val reads = Json.reads[MessageIdOnly]
+  implicit val schema = Schema[MessageIdOnly]
 }
-
-

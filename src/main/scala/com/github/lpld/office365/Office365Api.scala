@@ -5,13 +5,15 @@ import java.io.IOException
 import akka.NotUsed
 import akka.stream.SourceShape
 import akka.stream.scaladsl.{Flow, GraphDSL, Merge, Source, UnzipWith}
-import com.github.lpld.office365.Office365Api.{Req, Resp, manyReads}
+import com.github.lpld.office365.Office365Api.{Req, Resp}
 import com.github.lpld.office365.http.WSClientAdapter
 import play.api.libs.json._
 import play.api.libs.ws.JsonBodyReadables._
 import play.api.libs.ws.{StandaloneWSRequest, StandaloneWSResponse}
 
 /**
+  * High-level API client, that takes care of API paths, property sets for entities and pagination.
+  *
   * @author leopold
   * @since 14/05/18
   */
@@ -25,28 +27,88 @@ class Office365Api
   defaultPageSize: Int = 100
 ) {
 
-  private val helper = new Helper(ws, credential.accessToken, preferredBodyType, defaultPageSize)
+  private val client = new Office365Client(ws, credential.accessToken, preferredBodyType)
 
   /**
-    * Get entity by ID
+    * Get entity by ID.
     */
-  def get[E: Entity : Reads](id: String): Source[E, NotUsed] =
-    helper.prepareRequest(s"${helper.getPath[E]}/$id")
-      .via(helper.execute("GET"))
-      .via(helper.handle404)
-      .via(helper.parse[E])
+  def get[E: Schema : Reads : Path](id: String): Source[E, NotUsed] =
+    client.getOne(
+      path = s"${pathFor[E]}/$id",
+      queryParams = queryParamsFor[E]: _*
+    )
 
-  def query[E: Reads: Entity]($select: String = null,
-                               $filter: String = null,
-                               $orderby: String = null): Source[E, NotUsed] = {
+  /**
+    * Query multiple entities.
+    */
+  def query[E: Schema : Reads : Path](filter: String = null,
+                                      orderby: String = null): Source[E, NotUsed] =
+    getPaged[E](queryParamsFor[E](filter, orderby): _*)
 
-    val params = List(
-      "$select" -> $select,
-      "$filter" -> $filter,
-      "$orderby" -> $orderby
+
+  /**
+    * Returns a source that contains data from paged query to the API.
+    */
+  def getPaged[E: Path : Reads](params: (String, String)*): Source[E, NotUsed] = {
+    Source.fromGraph(GraphDSL.create() { implicit b =>
+      import GraphDSL.Implicits._
+
+      // loading first page from the API
+      val firstPage = client.getMany[E](pathFor[E], params ++ List("$top" -> s"$defaultPageSize", "$skip" -> "0"): _*)
+
+      // merging results from firstPage and feedback loop
+      val merge = b.add(Merge[Many[E]](2))
+
+      // unzipping Many into List[E] and Option[String] representing next records url.
+      val unzip = b.add(UnzipWith((many: Many[E]) => (many.value, many.`@odata.nextLink`)))
+
+      // in order for the cycle to complete we need to add takeWhile here. otherwise merge stage
+      // will never be completed.
+      val nextPagePath = Flow[Option[String]]
+        .takeWhile(_.isDefined)
+        .mapConcat(_.toList)
+        .map(Office365Api.extractPath)
+
+      // loading next page from the API
+      val loadPage = Flow[String].flatMapConcat(path => client.getMany[E](path))
+
+      val flatten = b.add(Flow[List[E]].mapConcat(identity))
+
+      // the graph itself:
+      // @formatter:off
+      firstPage ~> merge             ~>                 unzip.in
+                   merge <~ loadPage <~ nextPagePath <~ unzip.out1
+                                                        unzip.out0 ~> flatten
+      // @formatter:on
+
+      SourceShape(flatten.out)
+    })
+  }
+
+  private def pathFor[E: Path]: String = implicitly[Path[E]].apiPath
+
+  private def schemaFor[E: Schema]: Schema[E] = implicitly[Schema[E]]
+
+  private def queryParamsFor[E: Schema]: List[(String, String)] = queryParamsFor[E](null, null)
+
+  private def queryParamsFor[E: Schema](filter: String, orderby: String): List[(String, String)] = {
+    val schema = schemaFor[E]
+
+    def expand: String =
+      if (schema.extendedProperties.isEmpty) null
+      else {
+        val propsClause = schema.extendedProperties
+          .map(p => s"PropertyId eq '${p.propertyId}'")
+          .mkString(" OR ")
+        s"SingleValueExtendedProperties($$filter=$propsClause)"
+      }
+
+    List(
+      "$select" -> schema.standardProperties.mkString(","),
+      "$filter" -> filter,
+      "$orderby" -> orderby,
+      "$expand" -> expand
     ).filterNot(_._2 == null)
-
-    helper.getPaged[E](params: _*)
   }
 }
 
@@ -61,33 +123,49 @@ object Office365Api {
   type Req = StandaloneWSRequest
   type Resp = StandaloneWSResponse
 
-  implicit def manyReads[T: Reads]: Reads[Many[T]] = Reads { json =>
-    JsSuccess(Many(
-      value = (json \ "value").as[List[T]],
-      nextUrl = (json \ "@odata.nextLink").asOpt[String]
-    ))
-  }
+}
+
+object Office365Client {
+  implicit def manyReads[E: Reads]: Reads[Many[E]] = Json.reads[Many[E]]
 }
 
 // todo: handle refresh token
-private class Helper(ws: WSClientAdapter, accessToken: String, bodyType: BodyType, pageSize: Int) {
+/**
+  * Low-level API client
+  */
+class Office365Client(ws: WSClientAdapter, accessToken: String, preferredBodyType: BodyType) {
+
+  import Office365Client.manyReads
+
+  def getOne[E: Reads](path: String, queryParams: (String, String)*): Source[E, NotUsed] =
+    prepareRequest(path)
+      .via(withQueryParams(queryParams))
+      .via(execute("GET"))
+      .via(handle404)
+      .via(parse[E])
+
+  def getMany[T: Reads](path: String, params: (String, String)*): Source[Many[T], NotUsed] =
+    prepareRequest(path)
+      .via(withQueryParams(params))
+      .via(execute("GET"))
+      .via(parse[Many[T]])
 
   /**
     * Create an http request with common parameters (authentication, http headers).
     */
-  def prepareRequest(path: String): Source[Req, NotUsed] = Source.single {
+  private def prepareRequest(path: String): Source[Req, NotUsed] = Source.single {
     ws.url(s"${Office365Api.baseUrl}$path")
       .withHttpHeaders(
         "Authorization" -> s"Bearer $accessToken",
         "Accept" -> "application/json",
-        "Prefer" -> s"""outlook.body-content-type="${bodyType.name}""""
+        "Prefer" -> s"""outlook.body-content-type="${preferredBodyType.name}""""
       )
   }
 
   /**
     * Execute request and wrap bad status in Office365ResponseException.
     */
-  def execute(method: String): Flow[Req, Resp, NotUsed] =
+  private def execute(method: String): Flow[Req, Resp, NotUsed] =
     Flow[Req]
       .mapAsync(1) { req =>
         //        logger.info(s"Making request ${req.url}")
@@ -104,7 +182,7 @@ private class Helper(ws: WSClientAdapter, accessToken: String, bodyType: BodyTyp
   /**
     * Handle 404: produce empty stream in case of 404 error.
     */
-  def handle404[T]: Flow[T, T, NotUsed] =
+  private def handle404[T]: Flow[T, T, NotUsed] =
     Flow[T]
       .map(List(_))
       .recover {
@@ -115,67 +193,14 @@ private class Helper(ws: WSClientAdapter, accessToken: String, bodyType: BodyTyp
   /**
     * Parse response into a JSON value
     */
-  def parse[T: Reads]: Flow[Resp, T, NotUsed] =
+  private def parse[T: Reads]: Flow[Resp, T, NotUsed] =
     Flow[Resp].map(_.body[JsValue].as[T])
-
-  def getPath[E: Entity]: String = implicitly[Entity[E]].apiPath
 
   /**
     * Add query parameters to the request
     */
   private def withQueryParams(params: Seq[(String, String)]): Flow[Req, Req, NotUsed] =
     Flow[Req].map(_.withQueryStringParameters(params: _*))
-
-  private def getMany[T: Reads](path: String, params: (String, String)*): Source[Many[T], NotUsed] =
-    prepareRequest(path)
-      .via(withQueryParams(params))
-      .via(execute("GET"))
-      .via(parse[Many[T]])
-
-  private def getFirstPage[T: Entity : Reads](query: (String, String)*): Source[Many[T], NotUsed] =
-    getMany[T](
-      path = getPath[T],
-      params = query ++ List("$top" -> s"$pageSize", "$skip" -> "0"): _*
-    )
-
-  /**
-    * Returns a source that contains data from paged query to the API.
-    */
-  def getPaged[T: Entity : Reads](params: (String, String)*): Source[T, NotUsed] = {
-    Source.fromGraph(GraphDSL.create() { implicit b =>
-      import GraphDSL.Implicits._
-
-      // loading first page from the API
-      val firstPage = getFirstPage[T](params: _*)
-
-      // merging results from firstPage and feedback loop
-      val merge = b.add(Merge[Many[T]](2))
-
-      // unzipping Many into List[T] and Option[String] representing next records url.
-      val unzip = b.add(UnzipWith((many: Many[T]) => (many.value, many.nextUrl)))
-
-      // in order for the cycle to complete we need to add takeWhile here. otherwise merge stage
-      // will never be completed.
-      val nextPagePath = Flow[Option[String]]
-        .takeWhile(_.isDefined)
-        .mapConcat(_.toList)
-        .map(Office365Api.extractPath)
-
-      // loading next page from the API
-      val loadPage = Flow[String].flatMapConcat(path => getMany[T](path))
-
-      val flatten = b.add(Flow[List[T]].mapConcat(identity))
-
-      // the graph itself:
-      // @formatter:off
-      firstPage ~> merge             ~>                 unzip.in
-                   merge <~ loadPage <~ nextPagePath <~ unzip.out1
-                                                        unzip.out0 ~> flatten
-      // @formatter:on
-
-      SourceShape(flatten.out)
-    })
-  }
 }
 
 class Office365Exception(message: String) extends IOException(message)
@@ -183,10 +208,9 @@ class Office365Exception(message: String) extends IOException(message)
 case class Office365ResponseException(status: Int, statusText: String, errorDetails: String)
   extends Office365Exception(s"$status - $statusText: $errorDetails")
 
-case class Many[T](value: List[T], nextUrl: Option[String])
-
-//                   `@odata.context`: String,
-//                   `@odata.nextLink`: Option[String])
+case class Many[T](value: List[T],
+                   `@odata.context`: String,
+                   `@odata.nextLink`: Option[String])
 
 sealed abstract class BodyType(val name: String)
 
