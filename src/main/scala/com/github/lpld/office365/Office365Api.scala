@@ -2,6 +2,7 @@ package com.github.lpld.office365
 
 import java.io.IOException
 
+import akka.NotUsed
 import akka.stream.SourceShape
 import akka.stream.scaladsl.{Flow, GraphDSL, Merge, Source, UnzipWith}
 import com.github.lpld.office365.Office365Api.{Req, Resp, manyReads}
@@ -29,21 +30,21 @@ class Office365Api
   /**
     * Get entity by ID
     */
-  def get[E: Entity : Reads](id: String): Source[E, _] =
+  def get[E: Entity : Reads](id: String): Source[E, NotUsed] =
     helper.prepareRequest(s"${helper.getPath[E]}/$id")
       .via(helper.execute("GET"))
       .via(helper.handle404)
       .via(helper.parse[E])
 
-  def query[E: Entity : Reads]($select: String = null,
+  def query[E: Reads: Entity]($select: String = null,
                                $filter: String = null,
-                               $orderby: String = null): Source[E, _] = {
+                               $orderby: String = null): Source[E, NotUsed] = {
 
     val params = List(
       "$select" -> $select,
       "$filter" -> $filter,
       "$orderby" -> $orderby
-    ).filterNot(_._1 == null)
+    ).filterNot(_._2 == null)
 
     helper.getPaged[E](params: _*)
   }
@@ -63,7 +64,7 @@ object Office365Api {
   implicit def manyReads[T: Reads]: Reads[Many[T]] = Reads { json =>
     JsSuccess(Many(
       value = (json \ "value").as[List[T]],
-      nextUrl = Option((json \ "@odata.nextLink").as[String])
+      nextUrl = (json \ "@odata.nextLink").asOpt[String]
     ))
   }
 }
@@ -74,7 +75,7 @@ private class Helper(ws: WSClientAdapter, accessToken: String, bodyType: BodyTyp
   /**
     * Create an http request with common parameters (authentication, http headers).
     */
-  def prepareRequest(path: String): Source[Req, _] = Source.single {
+  def prepareRequest(path: String): Source[Req, NotUsed] = Source.single {
     ws.url(s"${Office365Api.baseUrl}$path")
       .withHttpHeaders(
         "Authorization" -> s"Bearer $accessToken",
@@ -86,7 +87,7 @@ private class Helper(ws: WSClientAdapter, accessToken: String, bodyType: BodyTyp
   /**
     * Execute request and wrap bad status in Office365ResponseException.
     */
-  def execute(method: String): Flow[Req, Resp, _] =
+  def execute(method: String): Flow[Req, Resp, NotUsed] =
     Flow[Req]
       .mapAsync(1) { req =>
         //        logger.info(s"Making request ${req.url}")
@@ -103,7 +104,7 @@ private class Helper(ws: WSClientAdapter, accessToken: String, bodyType: BodyTyp
   /**
     * Handle 404: produce empty stream in case of 404 error.
     */
-  def handle404[T]: Flow[T, T, _] =
+  def handle404[T]: Flow[T, T, NotUsed] =
     Flow[T]
       .map(List(_))
       .recover {
@@ -114,7 +115,7 @@ private class Helper(ws: WSClientAdapter, accessToken: String, bodyType: BodyTyp
   /**
     * Parse response into a JSON value
     */
-  def parse[T: Reads]: Flow[Resp, T, _] =
+  def parse[T: Reads]: Flow[Resp, T, NotUsed] =
     Flow[Resp].map(_.body[JsValue].as[T])
 
   def getPath[E: Entity]: String = implicitly[Entity[E]].apiPath
@@ -122,16 +123,16 @@ private class Helper(ws: WSClientAdapter, accessToken: String, bodyType: BodyTyp
   /**
     * Add query parameters to the request
     */
-  private def withQueryParams(params: Seq[(String, String)]): Flow[Req, Req, _] =
+  private def withQueryParams(params: Seq[(String, String)]): Flow[Req, Req, NotUsed] =
     Flow[Req].map(_.withQueryStringParameters(params: _*))
 
-  private def getMany[T: Reads](path: String, params: (String, String)*): Source[Many[T], _] =
+  private def getMany[T: Reads](path: String, params: (String, String)*): Source[Many[T], NotUsed] =
     prepareRequest(path)
       .via(withQueryParams(params))
       .via(execute("GET"))
       .via(parse[Many[T]])
 
-  private def getFirstPage[T: Entity : Reads](query: (String, String)*): Source[Many[T], _] =
+  private def getFirstPage[T: Entity : Reads](query: (String, String)*): Source[Many[T], NotUsed] =
     getMany[T](
       path = getPath[T],
       params = query ++ List("$top" -> s"$pageSize", "$skip" -> "0"): _*
@@ -140,7 +141,7 @@ private class Helper(ws: WSClientAdapter, accessToken: String, bodyType: BodyTyp
   /**
     * Returns a source that contains data from paged query to the API.
     */
-  def getPaged[T: Entity : Reads](params: (String, String)*): Source[T, _] = {
+  def getPaged[T: Entity : Reads](params: (String, String)*): Source[T, NotUsed] = {
     Source.fromGraph(GraphDSL.create() { implicit b =>
       import GraphDSL.Implicits._
 
