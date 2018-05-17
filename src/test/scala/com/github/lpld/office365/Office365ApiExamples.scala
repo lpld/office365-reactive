@@ -26,7 +26,7 @@ object Office365ApiExamples extends App {
     credential = CredentialData(
       initialToken = Some(TokenSuccess(
         "aaa",
-        System.currentTimeMillis() + 1.hour.toMillis
+        System.currentTimeMillis() + 5.minutes.toMillis + 5.second.toMillis
       )),
       refreshAction = () => Future.successful(TokenFailure(critical = true, "Cannot refresh"))
     ),

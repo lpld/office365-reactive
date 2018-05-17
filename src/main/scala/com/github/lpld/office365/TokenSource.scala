@@ -34,7 +34,8 @@ class TokenSource(initialToken: Option[TokenSuccess],
     */
   val credential: Source[String, NotUsed] =
     Source
-      .fromFuture {
+      .single(())
+      .mapAsync(1) { _ =>
         import akka.pattern.ask
         implicit val timeout: Timeout = 30.seconds
         (refresher ? GetToken).mapTo[TokenResponse]
