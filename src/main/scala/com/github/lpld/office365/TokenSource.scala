@@ -68,8 +68,9 @@ object TokenRefresher {
 
   case object GetToken
 
+  // todo: not sure about the retries logic. should i make it configurable?
   def apply(initialToken: Option[TokenSuccess], refreshAction: () => Future[TokenResponse]) =
-    Props(classOf[TokenRefresher], initialToken, refreshAction, 3)
+    Props(classOf[TokenRefresher], initialToken, refreshAction, 2)
 }
 
 /**
@@ -119,7 +120,10 @@ class TokenRefresher
     implicit val ctx = context.dispatcher
 
     attemptsPerformed = attemptsPerformed + 1
-    refreshAction() pipeTo self
+    refreshAction().recover { case t =>
+      log.error("Could not refresh token", t)
+      TokenFailure(critical = false, t.getMessage)
+    } pipeTo self
   }
 
   private def handleRefreshResponse(response: TokenResponse): Unit = {
