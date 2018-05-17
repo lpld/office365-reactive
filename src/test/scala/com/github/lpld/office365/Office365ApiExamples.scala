@@ -81,10 +81,7 @@ object Office365ApiExamples extends App {
 
   def loadMessageById(): Unit = {
     val id = "AQMkAGY0ZTQyM2ZlLTM5N2UtNGZkYy1hZmQ2LTJkNDdmNTlmMGZlNgBGAAADhXGu-WVhvEKOWPBUZKnvPwcAAAAUsezTfrRCmmimIKi3ETUAAAIBDAAAARSx7NN_tEKaaKYgqLcRNQABSq7DNAAAAA=="
-    val message = api
-      .get[Message](id)
-      .toMat(Sink.head)(Keep.right)
-      .run()
+    val message = api.get[Message](id).runWith(Sink.head)
 
     println(Await.result(message, 30.seconds))
   }
@@ -92,10 +89,7 @@ object Office365ApiExamples extends App {
   def loadExtendedMessageById(): Unit = {
 
     val id = "AQMkAGY0ZTQyM2ZlLTM5N2UtNGZkYy1hZmQ2LTJkNDdmNTlmMGZlNgBGAAADhXGu-WVhvEKOWPBUZKnvPwcAAAAUsezTfrRCmmimIKi3ETUAAAIBDAAAARSx7NN_tEKaaKYgqLcRNQABSq7DNAAAAA=="
-    val message = api
-      .get[MessageExtended](id)
-      .toMat(Sink.head)(Keep.right)
-      .run()
+    val message = api.get[MessageExtended](id).runWith(Sink.head)
 
     println(Await.result(message, 30.seconds))
   }

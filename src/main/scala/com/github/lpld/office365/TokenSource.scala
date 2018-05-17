@@ -15,7 +15,7 @@ case class CredentialData(initialToken: Option[TokenSuccess], refreshAction: () 
 /**
   * A source for OAuth 2.0 access tokens, that can be shared between stream materializations.
   *
-  * todo: think better of the situations when the `refresher` actor fails. Who should supervise it?
+  * todo: think better of situations when the `refresher` actor fails. Who should supervise it?
   *
   * @author leopold
   * @since 14/05/18
