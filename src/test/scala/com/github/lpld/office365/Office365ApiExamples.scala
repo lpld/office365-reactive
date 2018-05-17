@@ -5,10 +5,11 @@ import java.time.{Duration, Instant}
 import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
 import akka.stream.scaladsl.{Keep, Sink}
+import com.github.lpld.office365.TokenRefresher.{TokenFailure, TokenSuccess}
 import play.api.libs.json.Json
 import play.api.libs.ws.ahc.StandaloneAhcWSClient
 
-import scala.concurrent.Await
+import scala.concurrent.{Await, Future}
 import scala.concurrent.duration.DurationLong
 
 /**
@@ -22,9 +23,12 @@ object Office365ApiExamples extends App {
 
   val api = new Office365Api(
     ws = StandaloneAhcWSClient(),
-    credential = Credential(
-      "aaa",
-      "xxx"
+    credential = CredentialData(
+      initialToken = Some(TokenSuccess(
+        "aaa",
+        System.currentTimeMillis() + 1.hour.toMillis
+      )),
+      refreshAction = () => Future.successful(TokenFailure(critical = true, "Cannot refresh"))
     ),
     defaultPageSize = 5
   )

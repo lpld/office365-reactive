@@ -6,10 +6,9 @@ import akka.NotUsed
 import akka.stream.SourceShape
 import akka.stream.scaladsl.{Flow, GraphDSL, Merge, Source, UnzipWith}
 import com.github.lpld.office365.Office365Api.{Req, Resp}
-import com.github.lpld.office365.http.WSClientAdapter
 import play.api.libs.json._
 import play.api.libs.ws.JsonBodyReadables._
-import play.api.libs.ws.{StandaloneWSRequest, StandaloneWSResponse}
+import play.api.libs.ws.{StandaloneWSClient, StandaloneWSRequest, StandaloneWSResponse}
 
 /**
   * High-level API client, that takes care of API paths, property sets for entities and pagination.
@@ -19,15 +18,15 @@ import play.api.libs.ws.{StandaloneWSRequest, StandaloneWSResponse}
   */
 class Office365Api
 (
-  ws: WSClientAdapter,
-  credential: Credential,
+  ws: StandaloneWSClient,
+  credential: CredentialData,
 
   // todo: move this options to config
   preferredBodyType: BodyType = BodyType.Html,
   defaultPageSize: Int = 100
 ) {
 
-  private val client = new Office365Client(ws, credential.accessToken, preferredBodyType)
+  private val client = new Office365Client(ws, credential, preferredBodyType)
 
   /**
     * Get entity by ID.
@@ -85,6 +84,8 @@ class Office365Api
     })
   }
 
+  def close(): Unit = client.close()
+
   private def pathFor[E: Path]: String = implicitly[Path[E]].apiPath
 
   private def schemaFor[E: Schema]: Schema[E] = implicitly[Schema[E]]
@@ -129,11 +130,12 @@ object Office365Client {
   implicit def manyReads[E: Reads]: Reads[Many[E]] = Json.reads[Many[E]]
 }
 
-// todo: handle refresh token
 /**
   * Low-level API client
   */
-class Office365Client(ws: WSClientAdapter, accessToken: String, preferredBodyType: BodyType) {
+class Office365Client(ws: StandaloneWSClient, credentialData: CredentialData, preferredBodyType: BodyType) {
+
+  val tokenSource = TokenSource(credentialData)
 
   import Office365Client.manyReads
 
@@ -153,14 +155,16 @@ class Office365Client(ws: WSClientAdapter, accessToken: String, preferredBodyTyp
   /**
     * Create an http request with common parameters (authentication, http headers).
     */
-  private def prepareRequest(path: String): Source[Req, NotUsed] = Source.single {
-    ws.url(s"${Office365Api.baseUrl}$path")
-      .withHttpHeaders(
-        "Authorization" -> s"Bearer $accessToken",
-        "Accept" -> "application/json",
-        "Prefer" -> s"""outlook.body-content-type="${preferredBodyType.name}""""
+  private def prepareRequest(path: String): Source[Req, NotUsed] =
+    tokenSource.credential
+      .map(accessToken =>
+        ws.url(s"${Office365Api.baseUrl}$path")
+          .withHttpHeaders(
+            "Authorization" -> s"Bearer $accessToken",
+            "Accept" -> "application/json",
+            "Prefer" -> s"""outlook.body-content-type="${preferredBodyType.name}""""
+          )
       )
-  }
 
   /**
     * Execute request and wrap bad status in Office365ResponseException.
@@ -201,6 +205,8 @@ class Office365Client(ws: WSClientAdapter, accessToken: String, preferredBodyTyp
     */
   private def withQueryParams(params: Seq[(String, String)]): Flow[Req, Req, NotUsed] =
     Flow[Req].map(_.withQueryStringParameters(params: _*))
+
+  def close(): Unit = tokenSource.close()
 }
 
 class Office365Exception(message: String) extends IOException(message)
