@@ -8,7 +8,7 @@ import scala.reflect.runtime.universe._
   * @author leopold
   * @since 14/05/18
   */
-case class Schema[T](standardProperties: Seq[String], extendedProperties: List[ExtendedProperty])
+case class Schema[T](standardProperties: List[String], extendedProperties: List[ExtendedProperty])
 
 object Schema {
 
@@ -20,14 +20,11 @@ object Schema {
     */
   def apply[T: TypeTag](extendedProperties: ExtendedProperty*): Schema[T] = {
 
-    val stdProperties = typeOf[T]
-      .members
-      .collect {
-        case m: MethodSymbol if m.isVal && m.isCaseAccessor =>
-          m.name.decodedName.toString
-      }
-      .filterNot(reservedPropertyNames.contains)
-      .toList
+    val stdProperties =
+      typeOf[T]
+        .members.sorted
+        .collect { case m: MethodSymbol if m.isCaseAccessor => m.name.decodedName.toString }
+        .filterNot(reservedPropertyNames.contains)
 
     Schema(stdProperties, extendedProperties.toList)
   }

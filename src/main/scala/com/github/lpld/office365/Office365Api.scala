@@ -22,11 +22,12 @@ class Office365Api
   credential: CredentialData,
 
   // todo: move this options to config
+  baseUrl: String = Office365Api.defaultUrl,
   preferredBodyType: BodyType = BodyType.Html,
   defaultPageSize: Int = 100
 ) {
 
-  private val client = new Office365Client(ws, credential, preferredBodyType)
+  private val client = new Office365Client(baseUrl, ws, credential, preferredBodyType)
 
   /**
     * Get entity by ID.
@@ -114,11 +115,11 @@ class Office365Api
 }
 
 object Office365Api {
-  val baseUrl = "https://outlook.office.com/api/v2.0/me"
+  val defaultUrl = "https://outlook.office.com/api/v2.0/me"
 
   def extractPath(fullUrl: String): String = {
-    require(fullUrl startsWith baseUrl)
-    fullUrl substring baseUrl.length
+    require(fullUrl startsWith defaultUrl)
+    fullUrl substring defaultUrl.length
   }
 
   type Req = StandaloneWSRequest
@@ -133,7 +134,7 @@ object Office365Client {
 /**
   * Low-level API client
   */
-class Office365Client(ws: StandaloneWSClient, credentialData: CredentialData, preferredBodyType: BodyType) {
+class Office365Client(baseUrl: String, ws: StandaloneWSClient, credentialData: CredentialData, preferredBodyType: BodyType) {
 
   val tokenSource = TokenSource(credentialData)
 
@@ -158,7 +159,7 @@ class Office365Client(ws: StandaloneWSClient, credentialData: CredentialData, pr
   private def prepareRequest(path: String): Source[Req, NotUsed] =
     tokenSource.credential
       .map(accessToken =>
-        ws.url(s"${Office365Api.baseUrl}$path")
+        ws.url(s"$baseUrl$path")
           .withHttpHeaders(
             "Authorization" -> s"Bearer $accessToken",
             "Accept" -> "application/json",

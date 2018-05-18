@@ -39,7 +39,7 @@ object Model {
   * Extended properties support
   */
 trait ExtendedPropertiesSupport {
-  protected def SingleValueExtendedProperties: List[SingleValueProperty]
+  def SingleValueExtendedProperties: List[SingleValueProperty]
 
   private lazy val singleValueProps = SingleValueExtendedProperties
     .groupBy(_.PropertyId)

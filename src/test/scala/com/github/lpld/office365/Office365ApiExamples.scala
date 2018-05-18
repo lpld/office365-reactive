@@ -4,13 +4,13 @@ import java.time.{Duration, Instant}
 
 import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
-import akka.stream.scaladsl.{Keep, Sink}
+import akka.stream.scaladsl.Sink
 import com.github.lpld.office365.TokenRefresher.{TokenFailure, TokenSuccess}
 import play.api.libs.json.Json
 import play.api.libs.ws.ahc.StandaloneAhcWSClient
 
-import scala.concurrent.{Await, Future}
 import scala.concurrent.duration.DurationLong
+import scala.concurrent.{Await, Future}
 
 /**
   * @author leopold
@@ -25,8 +25,8 @@ object Office365ApiExamples extends App {
     ws = StandaloneAhcWSClient(),
     credential = CredentialData(
       initialToken = Some(TokenSuccess(
-        "aaa",
-        System.currentTimeMillis() + 5.minutes.toMillis + 5.second.toMillis
+        "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsIng1dCI6ImlCakwxUmNxemhpeTRmcHhJeGRacW9oTTJZayIsImtpZCI6ImlCakwxUmNxemhpeTRmcHhJeGRacW9oTTJZayJ9.eyJhdWQiOiJodHRwczovL291dGxvb2sub2ZmaWNlMzY1LmNvbS8iLCJpc3MiOiJodHRwczovL3N0cy53aW5kb3dzLm5ldC84NWQyYTViYi0xZDlmLTQxMDUtYTRjNi0zMjczOTAyMTc5NmIvIiwiaWF0IjoxNTI2NjQxMzczLCJuYmYiOjE1MjY2NDEzNzMsImV4cCI6MTUyNjY0NTI3MywiYWNjdCI6MCwiYWNyIjoiMSIsImFpbyI6IlkyZGdZR0F1S3RpdTFaUWlkL0RQM2plcUMvNnQ1TXc3M25YNnlnbStXam1qYlpOOGxLVUEiLCJhbXIiOlsicHdkIl0sImFwcF9kaXNwbGF5bmFtZSI6IlRocmVhZEJvdCIsImFwcGlkIjoiMjg3NGIzYzEtMGUzOS00ZjM0LWEwMjktOWU3MTgxNTQ2OGVlIiwiYXBwaWRhY3IiOiIxIiwiZV9leHAiOjI2MjgwMCwiZW5mcG9saWRzIjpbXSwiZmFtaWx5X25hbWUiOiJTaXZhc2hvdiIsImdpdmVuX25hbWUiOiJMZXYiLCJpcGFkZHIiOiI0Ni45OC4yNDguNjQiLCJuYW1lIjoiTGV2IFNpdmFzaG92Iiwib2lkIjoiMzRjMzY2OTAtYmVjMi00MmI4LTgxOTItYmQyNDZhNDYyMjRmIiwicHVpZCI6IjEwMDM3RkZFOUNCQUY0RDkiLCJwd2RfZXhwIjoiMTE1MTQzMSIsInB3ZF91cmwiOiJodHRwczovL3BvcnRhbC5taWNyb3NvZnRvbmxpbmUuY29tL0NoYW5nZVBhc3N3b3JkLmFzcHgiLCJzY3AiOiJDYWxlbmRhcnMuUmVhZFdyaXRlIGZ1bGxfYWNjZXNzX2FzX3VzZXIgTWFpbC5SZWFkV3JpdGUgTWFpbC5TZW5kIiwic3ViIjoiVWFwWTI5UmZhQlR6VU1UN216d19EdUx0X3ZJSlNaejU3NV9wbnZfcjhlTSIsInRpZCI6Ijg1ZDJhNWJiLTFkOWYtNDEwNS1hNGM2LTMyNzM5MDIxNzk2YiIsInVuaXF1ZV9uYW1lIjoibGV2QHlveGVsLm5ldCIsInVwbiI6ImxldkB5b3hlbC5uZXQiLCJ1dGkiOiJkZ0x0RXJmRXhVLUpRNWxscVVzZUFBIiwidmVyIjoiMS4wIn0.Na10WsTkJ5a1I5Jtaqca8aARdItIUe1fJL3oigwSAhFfQPnqcpOPaDrHIkSQ26CCOKUmZf1DPWXrbet0q8HnBC72vVJCxWsYSVMrCs5OtH4PdeqQRth3AVdFgKGxxISpCjSuXOVJ9_xMrIdJ0VrCF8tRDdfK4HqJJ3QUUH6Kbh-D2IYeGKkScaETf9CBpAnaKrJrd0_6bJwmA-8MDck-HlP4p3ilD_nvLCr9nz6IcgvPdsq34J-ad9BWgyKIKlsu4OR68AIFcSFvpE0wgYywghBICHyTgaxPNG_3M6lcMU-YH9oz_VoI1PNqU47_ft0LpSDXFnJpZYiBnOLN2oterg",
+        System.currentTimeMillis() + 10.minutes.toMillis
       )),
       refreshAction = () => Future.successful(TokenFailure(critical = true, "Cannot refresh"))
     ),
@@ -53,8 +53,7 @@ object Office365ApiExamples extends App {
   (
     Id: String,
     Subject: String,
-
-    protected val SingleValueExtendedProperties: List[SingleValueProperty]
+    SingleValueExtendedProperties: List[SingleValueProperty]
   ) extends OMessage with ExtendedPropertiesSupport {
 
     def itemClass: Option[String] = getProp(ExtendedProperties.ItemClassProp)
