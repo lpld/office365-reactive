@@ -2,6 +2,7 @@ package com.github.lpld.office365
 
 import java.time.Instant
 
+import com.github.lpld.office365.model.SingleValueProperty
 import org.scalatest.{Matchers, WordSpec}
 
 /**
@@ -20,7 +21,7 @@ class SchemaSpec extends WordSpec with Matchers {
     }
 
     "ignore reserved property names" in {
-      Schema[ExtendedTestModel] shouldEqual List("Id")
+      Schema[ExtendedTestModel].standardProperties shouldEqual List("Id")
     }
   }
 }

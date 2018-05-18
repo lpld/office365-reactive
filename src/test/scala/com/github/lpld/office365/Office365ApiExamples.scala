@@ -6,6 +6,7 @@ import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
 import akka.stream.scaladsl.Sink
 import com.github.lpld.office365.TokenRefresher.{TokenFailure, TokenSuccess}
+import com.github.lpld.office365.model._
 import play.api.libs.json.Json
 import play.api.libs.ws.ahc.StandaloneAhcWSClient
 
@@ -41,7 +42,7 @@ object Office365ApiExamples extends App {
 
   def loadMessages(): Unit = {
 
-    val messages = api.query[Message](
+    val messages = api.query[MessageFull](
       filter = s"ReceivedDateTime ge ${Instant.now() minus Duration.ofDays(100)}",
       orderby = "ReceivedDateTime"
     )
@@ -53,7 +54,7 @@ object Office365ApiExamples extends App {
     Await.result(
       api
         .from(WellKnownFolder.SentItems)
-        .queryAll[Message]
+        .queryAll[MessageFull]
         .runForeach(println),
 
       30.seconds
@@ -63,7 +64,7 @@ object Office365ApiExamples extends App {
   def loadEventsFromFolder(): Unit = {
     Await.result(
       api
-        .from(Folder.Calendar, "asdfasdf")
+        .from(FolderType.Calendar, "asdfasdf")
         .queryAll[EventIdOnly]
         .runForeach(println),
 
@@ -103,7 +104,7 @@ object Office365ApiExamples extends App {
 
   def loadMessageById(): Unit = {
     val id = "AQMkAGY0ZTQyM2ZlLTM5N2UtNGZkYy1hZmQ2LTJkNDdmNTlmMGZlNgBGAAADhXGu-WVhvEKOWPBUZKnvPwcAAAAUsezTfrRCmmimIKi3ETUAAAIBDAAAARSx7NN_tEKaaKYgqLcRNQABSq7DNAAAAA=="
-    val message = api.get[Message](id).runWith(Sink.head)
+    val message = api.get[MessageFull](id).runWith(Sink.head)
 
     println(Await.result(message, 30.seconds))
   }

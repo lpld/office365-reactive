@@ -6,6 +6,7 @@ import akka.NotUsed
 import akka.stream.SourceShape
 import akka.stream.scaladsl.{Flow, GraphDSL, Merge, Source, UnzipWith}
 import com.github.lpld.office365.Office365Api.{Req, Resp}
+import com.github.lpld.office365.model._
 import play.api.libs.json._
 import play.api.libs.ws.JsonBodyReadables._
 import play.api.libs.ws.{StandaloneWSClient, StandaloneWSRequest, StandaloneWSResponse}
@@ -15,28 +16,31 @@ import play.api.libs.ws.{StandaloneWSClient, StandaloneWSRequest, StandaloneWSRe
   *  - / (root)
   *  - /Mailfolders/Inbox
   *  - /Calendars/AAMkAGI2TG93AAA=
-  *
   * etc.
+  *
+  * It supports basic operations for manipulating items (for now, only retrieving)
   */
-trait ItemBox[F <: OFolder] {
+trait ItemBox[F <: Folder] {
   /**
     * Get an item by id.
     */
-  def get[I <: Item[_ <: F] : Schema : Reads : Path](id: String): Source[I, NotUsed]
+  def get[I <: Item with ChildOf[_ <: F] : Schema : Reads : Api](id: String): Source[I, NotUsed]
 
   /**
     * Query multiple items, optionally specifying filter and orderby parameters.
     */
-  def query[I <: Item[_ <: F] : Schema : Reads : Path](filter: String = null, orderby: String = null): Source[I, NotUsed]
+  def query[I <: Item with ChildOf[_ <: F] : Schema : Reads : Api](filter: String = null, orderby: String = null): Source[I, NotUsed]
 
   /**
     * Query all items.
     */
-  def queryAll[I <: Item[_ <: F] : Schema : Reads : Path]: Source[I, NotUsed] = query(null, null)
+  def queryAll[I <: Item with ChildOf[_ <: F] : Schema : Reads : Api]: Source[I, NotUsed] = query(null, null)
 }
 
 /**
   * High-level API client, that takes care of API paths, item schemas and pagination.
+  *
+  * It extends {{{ItemBox[Folder]}}}, which basically means that it's a storage for items of all possible types.
   *
   * @author leopold
   * @since 14/05/18
@@ -50,50 +54,50 @@ class Office365Api
   baseUrl: String = Office365Api.defaultUrl,
   preferredBodyType: BodyType = BodyType.Html,
   defaultPageSize: Int = 100
-) extends ItemBox[OFolder] {
+) extends ItemBox[Folder] {
 
   private val client = new Office365Client(baseUrl, ws, credential, preferredBodyType)
 
-  private def itemBox[F <: OFolder](pathPrefix: String): ItemBox[F] =
+  private def itemBox[F <: Folder](pathPrefix: String): ItemBox[F] =
     new ItemBoxImpl[F](client, pathPrefix, defaultPageSize)
 
-  private val rootBox = itemBox[OFolder]("")
+  private val rootBox = itemBox[Folder]("")
 
-  override def get[I <: Item[_ <: OFolder] : Schema : Reads : Path](id: String): Source[I, NotUsed] =
+  override def get[I <: Item with ChildOf[_ <: Folder] : Schema : Reads : Api](id: String): Source[I, NotUsed] =
     rootBox.get[I](id)
 
-  override def query[I <: Item[_ <: OFolder] : Schema : Reads : Path](filter: String, orderby: String): Source[I, NotUsed] =
+  override def query[I <: Item with ChildOf[_ <: Folder] : Schema : Reads : Api](filter: String, orderby: String): Source[I, NotUsed] =
     rootBox.query[I](filter, orderby)
 
   /**
     * Return ItemBox for a specific folder
     */
-  def from[F <: OFolder : Path](folderType: Folder[F], id: String): ItemBox[F] =
-    itemBox[F](s"${implicitly[Path[F]].apiPath}/$id")
+  def from[F <: Folder : Api](folderType: FolderType[F], id: String): ItemBox[F] =
+    itemBox[F](s"${implicitly[Api[F]].path}/$id")
 
   /**
     * Return ItemBox for mail folder with well-known name
     */
-  def from(wellKnownFolder: WellKnownFolder): ItemBox[OMailFolder] = from(Folder.MailFolder, wellKnownFolder.name)
+  def from(wellKnownFolder: WellKnownFolder): ItemBox[OMailFolder] = from(FolderType.MailFolder, wellKnownFolder.name)
 
   def close(): Unit = client.close()
 }
 
-class ItemBoxImpl[F <: OFolder](client: Office365Client, pathPrefix: String, defaultPageSize: Int = 100) extends ItemBox[F] {
+private class ItemBoxImpl[F <: Folder](client: Office365Client, pathPrefix: String, defaultPageSize: Int = 100) extends ItemBox[F] {
 
-  override def get[I <: Item[_ <: F] : Schema : Reads : Path](id: String): Source[I, NotUsed] =
+  override def get[I <: Item with ChildOf[_ <: F] : Schema : Reads : Api](id: String): Source[I, NotUsed] =
     client.getOne(
       path = s"${pathFor[I]}/$id",
       queryParams = queryParamsFor[I]: _*
     )
 
-  override def query[I <: Item[_ <: F] : Schema : Reads : Path](filter: String, orderby: String): Source[I, NotUsed] =
+  override def query[I <: Item with ChildOf[_ <: F] : Schema : Reads : Api](filter: String, orderby: String): Source[I, NotUsed] =
     getPaged[I](queryParamsFor[I](filter, orderby): _*)
 
   /**
     * Perform a paginated query to the API.
     */
-  def getPaged[I: Path : Reads](params: (String, String)*): Source[I, NotUsed] = {
+  def getPaged[I: Api : Reads](params: (String, String)*): Source[I, NotUsed] = {
     Source.fromGraph(GraphDSL.create() { implicit b =>
       import GraphDSL.Implicits._
 
@@ -129,7 +133,7 @@ class ItemBoxImpl[F <: OFolder](client: Office365Client, pathPrefix: String, def
     })
   }
 
-  private def pathFor[I: Path]: String = pathPrefix + implicitly[Path[I]].apiPath
+  private def pathFor[I: Api]: String = pathPrefix + implicitly[Api[I]].path
 
   private def schemaFor[I: Schema]: Schema[I] = implicitly[Schema[I]]
 
@@ -174,7 +178,7 @@ object Office365Client {
 }
 
 /**
-  * Low-level API client
+  * Low-level API client.
   */
 class Office365Client(baseUrl: String, ws: StandaloneWSClient, credentialData: CredentialData, preferredBodyType: BodyType) {
 
