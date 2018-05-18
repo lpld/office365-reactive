@@ -11,7 +11,32 @@ import play.api.libs.ws.JsonBodyReadables._
 import play.api.libs.ws.{StandaloneWSClient, StandaloneWSRequest, StandaloneWSResponse}
 
 /**
-  * High-level API client, that takes care of API paths, property sets for entities and pagination.
+  * A part of the API that contains some items in it. For example:
+  *  - / (root)
+  *  - /Mailfolders/Inbox
+  *  - /Calendars/AAMkAGI2TG93AAA=
+  *
+  * etc.
+  */
+trait ItemBox[F <: OFolder] {
+  /**
+    * Get an item by id.
+    */
+  def get[I <: Item[_ <: F] : Schema : Reads : Path](id: String): Source[I, NotUsed]
+
+  /**
+    * Query multiple items, optionally specifying filter and orderby parameters.
+    */
+  def query[I <: Item[_ <: F] : Schema : Reads : Path](filter: String = null, orderby: String = null): Source[I, NotUsed]
+
+  /**
+    * Query all items.
+    */
+  def queryAll[I <: Item[_ <: F] : Schema : Reads : Path]: Source[I, NotUsed] = query(null, null)
+}
+
+/**
+  * High-level API client, that takes care of API paths, item schemas and pagination.
   *
   * @author leopold
   * @since 14/05/18
@@ -25,42 +50,61 @@ class Office365Api
   baseUrl: String = Office365Api.defaultUrl,
   preferredBodyType: BodyType = BodyType.Html,
   defaultPageSize: Int = 100
-) {
+) extends ItemBox[OFolder] {
 
   private val client = new Office365Client(baseUrl, ws, credential, preferredBodyType)
 
+  private def itemBox[F <: OFolder](pathPrefix: String): ItemBox[F] =
+    new ItemBoxImpl[F](client, pathPrefix, defaultPageSize)
+
+  private val rootBox = itemBox[OFolder]("")
+
+  override def get[I <: Item[_ <: OFolder] : Schema : Reads : Path](id: String): Source[I, NotUsed] =
+    rootBox.get[I](id)
+
+  override def query[I <: Item[_ <: OFolder] : Schema : Reads : Path](filter: String, orderby: String): Source[I, NotUsed] =
+    rootBox.query[I](filter, orderby)
+
   /**
-    * Get entity by ID.
+    * Return ItemBox for a specific folder
     */
-  def get[E: Schema : Reads : Path](id: String): Source[E, NotUsed] =
+  def from[F <: OFolder : Path](folderType: Folder[F], id: String): ItemBox[F] =
+    itemBox[F](s"${implicitly[Path[F]].apiPath}/$id")
+
+  /**
+    * Return ItemBox for mail folder with well-known name
+    */
+  def from(wellKnownFolder: WellKnownFolder): ItemBox[OMailFolder] = from(Folder.MailFolder, wellKnownFolder.name)
+
+  def close(): Unit = client.close()
+}
+
+class ItemBoxImpl[F <: OFolder](client: Office365Client, pathPrefix: String, defaultPageSize: Int = 100) extends ItemBox[F] {
+
+  override def get[I <: Item[_ <: F] : Schema : Reads : Path](id: String): Source[I, NotUsed] =
     client.getOne(
-      path = s"${pathFor[E]}/$id",
-      queryParams = queryParamsFor[E]: _*
+      path = s"${pathFor[I]}/$id",
+      queryParams = queryParamsFor[I]: _*
     )
 
-  /**
-    * Query multiple entities.
-    */
-  def query[E: Schema : Reads : Path](filter: String = null,
-                                      orderby: String = null): Source[E, NotUsed] =
-    getPaged[E](queryParamsFor[E](filter, orderby): _*)
-
+  override def query[I <: Item[_ <: F] : Schema : Reads : Path](filter: String, orderby: String): Source[I, NotUsed] =
+    getPaged[I](queryParamsFor[I](filter, orderby): _*)
 
   /**
-    * Returns a source that contains data from paged query to the API.
+    * Perform a paginated query to the API.
     */
-  def getPaged[E: Path : Reads](params: (String, String)*): Source[E, NotUsed] = {
+  def getPaged[I: Path : Reads](params: (String, String)*): Source[I, NotUsed] = {
     Source.fromGraph(GraphDSL.create() { implicit b =>
       import GraphDSL.Implicits._
 
       // loading first page from the API
-      val firstPage = client.getMany[E](pathFor[E], params ++ List("$top" -> s"$defaultPageSize", "$skip" -> "0"): _*)
+      val firstPage = client.getMany[I](pathFor[I], params ++ List("$top" -> s"$defaultPageSize", "$skip" -> "0"): _*)
 
       // merging results from firstPage and feedback loop
-      val merge = b.add(Merge[Many[E]](2))
+      val merge = b.add(Merge[Many[I]](2))
 
-      // unzipping Many into List[E] and Option[String] representing next records url.
-      val unzip = b.add(UnzipWith((many: Many[E]) => (many.value, many.`@odata.nextLink`)))
+      // unzipping Many into List[I] and Option[String] representing next records url.
+      val unzip = b.add(UnzipWith((many: Many[I]) => (many.value, many.`@odata.nextLink`)))
 
       // in order for the cycle to complete we need to add takeWhile here. otherwise merge stage
       // will never be completed.
@@ -70,9 +114,9 @@ class Office365Api
         .map(Office365Api.extractPath)
 
       // loading next page from the API
-      val loadPage = Flow[String].flatMapConcat(path => client.getMany[E](path))
+      val loadPage = Flow[String].flatMapConcat(path => client.getMany[I](path))
 
-      val flatten = b.add(Flow[List[E]].mapConcat(identity))
+      val flatten = b.add(Flow[List[I]].mapConcat(identity))
 
       // the graph itself:
       // @formatter:off
@@ -85,16 +129,14 @@ class Office365Api
     })
   }
 
-  def close(): Unit = client.close()
+  private def pathFor[I: Path]: String = pathPrefix + implicitly[Path[I]].apiPath
 
-  private def pathFor[E: Path]: String = implicitly[Path[E]].apiPath
+  private def schemaFor[I: Schema]: Schema[I] = implicitly[Schema[I]]
 
-  private def schemaFor[E: Schema]: Schema[E] = implicitly[Schema[E]]
+  private def queryParamsFor[I: Schema]: List[(String, String)] = queryParamsFor[I](null, null)
 
-  private def queryParamsFor[E: Schema]: List[(String, String)] = queryParamsFor[E](null, null)
-
-  private def queryParamsFor[E: Schema](filter: String, orderby: String): List[(String, String)] = {
-    val schema = schemaFor[E]
+  private def queryParamsFor[I: Schema](filter: String, orderby: String): List[(String, String)] = {
+    val schema = schemaFor[I]
 
     def expand: String =
       if (schema.extendedProperties.isEmpty) null
@@ -128,7 +170,7 @@ object Office365Api {
 }
 
 object Office365Client {
-  implicit def manyReads[E: Reads]: Reads[Many[E]] = Json.reads[Many[E]]
+  implicit def manyReads[I: Reads]: Reads[Many[I]] = Json.reads[Many[I]]
 }
 
 /**
@@ -140,18 +182,18 @@ class Office365Client(baseUrl: String, ws: StandaloneWSClient, credentialData: C
 
   import Office365Client.manyReads
 
-  def getOne[E: Reads](path: String, queryParams: (String, String)*): Source[E, NotUsed] =
+  def getOne[I: Reads](path: String, queryParams: (String, String)*): Source[I, NotUsed] =
     prepareRequest(path)
       .via(withQueryParams(queryParams))
       .via(execute("GET"))
       .via(handle404)
-      .via(parse[E])
+      .via(parse[I])
 
-  def getMany[T: Reads](path: String, params: (String, String)*): Source[Many[T], NotUsed] =
+  def getMany[I: Reads](path: String, params: (String, String)*): Source[Many[I], NotUsed] =
     prepareRequest(path)
       .via(withQueryParams(params))
       .via(execute("GET"))
-      .via(parse[Many[T]])
+      .via(parse[Many[I]])
 
   /**
     * Create an http request with common parameters (authentication, http headers).
@@ -198,8 +240,8 @@ class Office365Client(baseUrl: String, ws: StandaloneWSClient, credentialData: C
   /**
     * Parse response into a JSON value
     */
-  private def parse[T: Reads]: Flow[Resp, T, NotUsed] =
-    Flow[Resp].map(_.body[JsValue].as[T])
+  private def parse[I: Reads]: Flow[Resp, I, NotUsed] =
+    Flow[Resp].map(_.body[JsValue].as[I])
 
   /**
     * Add query parameters to the request
@@ -215,7 +257,7 @@ class Office365Exception(message: String) extends IOException(message)
 case class Office365ResponseException(status: Int, statusText: String, errorDetails: String)
   extends Office365Exception(s"$status - $statusText: $errorDetails")
 
-case class Many[T](value: List[T],
+case class Many[I](value: List[I],
                    `@odata.context`: String,
                    `@odata.nextLink`: Option[String])
 

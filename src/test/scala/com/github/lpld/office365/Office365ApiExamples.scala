@@ -34,9 +34,10 @@ object Office365ApiExamples extends App {
   )
 
   loadMessages()
-  loadMessagesWithExtendedProperty()
-  loadMessageById()
-  loadExtendedMessageById()
+  //  loadMessagesWithExtendedProperty()
+  //  loadMessageById()
+  //  loadExtendedMessageById()
+  //  loadMessagesFromFolder()
 
   def loadMessages(): Unit = {
 
@@ -48,7 +49,29 @@ object Office365ApiExamples extends App {
     Await.result(messages.runForeach(println), 30.seconds)
   }
 
-  // Entity with extended properties.
+  def loadMessagesFromFolder(): Unit = {
+    Await.result(
+      api
+        .from(WellKnownFolder.SentItems)
+        .queryAll[Message]
+        .runForeach(println),
+
+      30.seconds
+    )
+  }
+
+  def loadEventsFromFolder(): Unit = {
+    Await.result(
+      api
+        .from(Folder.Calendar, "asdfasdf")
+        .queryAll[EventIdOnly]
+        .runForeach(println),
+
+      30.seconds
+    )
+  }
+
+  // Item with extended properties.
   case class MessageExtended
   (
     Id: String,
@@ -61,7 +84,7 @@ object Office365ApiExamples extends App {
     def inReplyTo: Option[String] = getProp(ExtendedProperties.InReplyTo)
   }
 
-  // Companion object for the entity with implicit json Reads and Schema
+  // Companion object for item with implicit json Reads and Schema
   object MessageExtended {
     implicit val reads = Json.reads[MessageExtended]
 
