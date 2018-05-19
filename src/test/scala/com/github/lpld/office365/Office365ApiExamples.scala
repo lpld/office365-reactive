@@ -23,7 +23,7 @@ object Office365ApiExamples extends App {
   implicit val materializer = ActorMaterializer()
 
   val api = Office365Api(
-    ws = StandaloneAhcWSClient(),
+    client = new PlayWsHttpClient(StandaloneAhcWSClient()),
     credential = CredentialData(
       initialToken = Some(TokenSuccess(
         "jjj",
@@ -35,15 +35,15 @@ object Office365ApiExamples extends App {
   )
 
   loadMessages()
-  //  loadMessagesWithExtendedProperty()
-  //  loadMessageById()
-  //  loadExtendedMessageById()
-  //  loadMessagesFromFolder()
+  loadMessagesWithExtendedProperty()
+  loadMessageById()
+  loadExtendedMessageById()
+  loadMessagesFromFolder()
 
   def loadMessages(): Unit = {
 
     val messages = api.query[MessageFull](
-      filter = s"ReceivedDateTime ge ${Instant.now() minus Duration.ofDays(100)}",
+      filter = s"ReceivedDateTime ge ${Instant.now() minus Duration.ofDays(300)}",
       orderby = "ReceivedDateTime"
     )
 

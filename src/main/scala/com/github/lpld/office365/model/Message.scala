@@ -19,7 +19,7 @@ case class MessageFull
   CcRecipients: List[Recipient],
   ConversationId: String,
   CreatedDateTime: Instant,
-  From: Recipient,
+  From: Option[Recipient],
   HasAttachments: Boolean,
   Importance: String,
   IsDraft: Boolean,
@@ -28,11 +28,11 @@ case class MessageFull
   ParentFolderId: String,
   ReceivedDateTime: Instant,
   ReplyTo: List[Recipient],
-  Sender: Recipient,
+  Sender: Option[Recipient],
   SentDateTime: Instant,
   Subject: String,
   ToRecipients: List[Recipient],
-  UniqueBody: ItemBody
+  UniqueBody: Option[ItemBody]
 
 ) extends OMessage
 
