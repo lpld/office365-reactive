@@ -37,26 +37,37 @@ trait ItemBox[F <: Folder] {
   def queryAll[I <: Item with ChildOf[_ <: F] : Schema : Reads : Api]: Source[I, NotUsed] = query(null, null)
 }
 
+object Office365Api {
+  val defaultUrl = "https://outlook.office.com/api/v2.0/me"
+
+  def extractPath(fullUrl: String): String = {
+    require(fullUrl startsWith defaultUrl)
+    fullUrl substring defaultUrl.length
+  }
+
+  type Req = StandaloneWSRequest
+  type Resp = StandaloneWSResponse
+
+  def apply(ws: StandaloneWSClient,
+            credential: CredentialData,
+            defaultPageSize: Int = 100,
+            preferredBodyType: BodyType = BodyType.Html) =
+    new Office365Api(
+      new Office365Client(Office365Api.defaultUrl, ws, credential, preferredBodyType),
+      defaultPageSize
+    )
+}
+
 /**
-  * High-level API client, that takes care of API paths, item schemas and pagination.
+  * High-level API client, that takes care of API paths, item schemas and pagination. Generally, should be
+  * created using companion object.
   *
   * It extends {{{ItemBox[Folder]}}}, which basically means that it's a storage for items of all possible types.
   *
   * @author leopold
   * @since 14/05/18
   */
-class Office365Api
-(
-  ws: StandaloneWSClient,
-  credential: CredentialData,
-
-  // todo: move this options to config
-  baseUrl: String = Office365Api.defaultUrl,
-  preferredBodyType: BodyType = BodyType.Html,
-  defaultPageSize: Int = 100
-) extends ItemBox[Folder] {
-
-  private val client = new Office365Client(baseUrl, ws, credential, preferredBodyType)
+class Office365Api(client: LowLevelClient, defaultPageSize: Int = 100) extends ItemBox[Folder] {
 
   private def itemBox[F <: Folder](pathPrefix: String): ItemBox[F] =
     new ItemBoxImpl[F](client, pathPrefix, defaultPageSize)
@@ -83,12 +94,12 @@ class Office365Api
   def close(): Unit = client.close()
 }
 
-private class ItemBoxImpl[F <: Folder](client: Office365Client, pathPrefix: String, defaultPageSize: Int = 100) extends ItemBox[F] {
+private class ItemBoxImpl[F <: Folder](client: LowLevelClient, pathPrefix: String, defaultPageSize: Int = 100) extends ItemBox[F] {
 
   override def get[I <: Item with ChildOf[_ <: F] : Schema : Reads : Api](id: String): Source[I, NotUsed] =
     client.getOne(
       path = s"${pathFor[I]}/$id",
-      queryParams = queryParamsFor[I]: _*
+      queryParams = queryParamsFor[I]
     )
 
   override def query[I <: Item with ChildOf[_ <: F] : Schema : Reads : Api](filter: String, orderby: String): Source[I, NotUsed] =
@@ -102,7 +113,7 @@ private class ItemBoxImpl[F <: Folder](client: Office365Client, pathPrefix: Stri
       import GraphDSL.Implicits._
 
       // loading first page from the API
-      val firstPage = client.getMany[I](pathFor[I], params ++ List("$top" -> s"$defaultPageSize", "$skip" -> "0"): _*)
+      val firstPage = client.getMany[I](pathFor[I], params ++ List("$top" -> s"$defaultPageSize", "$skip" -> "0"))
 
       // merging results from firstPage and feedback loop
       val merge = b.add(Merge[Many[I]](2))
@@ -160,42 +171,39 @@ private class ItemBoxImpl[F <: Folder](client: Office365Client, pathPrefix: Stri
   }
 }
 
-object Office365Api {
-  val defaultUrl = "https://outlook.office.com/api/v2.0/me"
-
-  def extractPath(fullUrl: String): String = {
-    require(fullUrl startsWith defaultUrl)
-    fullUrl substring defaultUrl.length
-  }
-
-  type Req = StandaloneWSRequest
-  type Resp = StandaloneWSResponse
-
-}
 
 object Office365Client {
   implicit def manyReads[I: Reads]: Reads[Many[I]] = Json.reads[Many[I]]
 }
 
+trait LowLevelClient {
+  def getOne[I: Reads](path: String, queryParams: Seq[(String, String)]): Source[I, NotUsed]
+
+  def getMany[I: Reads](path: String, queryParams: Seq[(String, String)] = Seq.empty): Source[Many[I], NotUsed]
+
+  def close(): Unit
+}
+
 /**
   * Low-level API client.
   */
-class Office365Client(baseUrl: String, ws: StandaloneWSClient, credentialData: CredentialData, preferredBodyType: BodyType) {
+class Office365Client(baseUrl: String, ws: StandaloneWSClient, credentialData: CredentialData, preferredBodyType: BodyType)
+  extends LowLevelClient {
 
   val tokenSource = TokenSource(credentialData)
 
   import Office365Client.manyReads
 
-  def getOne[I: Reads](path: String, queryParams: (String, String)*): Source[I, NotUsed] =
+  override def getOne[I: Reads](path: String, queryParams: Seq[(String, String)]): Source[I, NotUsed] =
     prepareRequest(path)
       .via(withQueryParams(queryParams))
       .via(execute("GET"))
       .via(handle404)
       .via(parse[I])
 
-  def getMany[I: Reads](path: String, params: (String, String)*): Source[Many[I], NotUsed] =
+  override def getMany[I: Reads](path: String, queryParams: Seq[(String, String)] = Seq.empty): Source[Many[I], NotUsed] =
     prepareRequest(path)
-      .via(withQueryParams(params))
+      .via(withQueryParams(queryParams))
       .via(execute("GET"))
       .via(parse[Many[I]])
 
@@ -253,7 +261,7 @@ class Office365Client(baseUrl: String, ws: StandaloneWSClient, credentialData: C
   private def withQueryParams(params: Seq[(String, String)]): Flow[Req, Req, NotUsed] =
     Flow[Req].map(_.withQueryStringParameters(params: _*))
 
-  def close(): Unit = tokenSource.close()
+  override def close(): Unit = tokenSource.close()
 }
 
 class Office365Exception(message: String) extends IOException(message)

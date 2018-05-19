@@ -22,7 +22,7 @@ object Office365ApiExamples extends App {
   implicit val system = ActorSystem("api-examples")
   implicit val materializer = ActorMaterializer()
 
-  val api = new Office365Api(
+  val api = Office365Api(
     ws = StandaloneAhcWSClient(),
     credential = CredentialData(
       initialToken = Some(TokenSuccess(

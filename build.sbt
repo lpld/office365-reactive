@@ -15,6 +15,7 @@ libraryDependencies ++= Seq(
 
   // test:
   "org.scalatest" %% "scalatest" % "3.0.5" % Test,
+  "org.scalamock" %% "scalamock-scalatest-support" % "3.6.0" % Test,
   "com.typesafe.play" %% "play-ahc-ws-standalone" % playWsVersion % Test,
   "com.typesafe.akka" %% "akka-testkit" % akkaVersion % Test
 )
