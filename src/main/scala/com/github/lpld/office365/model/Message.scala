@@ -3,7 +3,7 @@ package com.github.lpld.office365.model
 import java.time.Instant
 
 import com.github.lpld.office365.Schema
-import play.api.libs.json.Json
+import play.api.libs.json.{Json, Writes}
 
 /**
   * @author leopold
@@ -45,5 +45,10 @@ case class MessageIdOnly(Id: String) extends OMessage
 object MessageIdOnly {
   implicit val reads = Json.reads[MessageIdOnly]
   implicit val schema = Schema[MessageIdOnly]
+}
+
+case class SendMessage[M <: OMessage](Message: M, SavetoSentItems: Boolean)
+object SendMessage {
+  implicit def writes[M <: OMessage : Writes] = Json.writes[SendMessage[M]]
 }
 

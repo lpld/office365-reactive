@@ -3,128 +3,35 @@ package com.github.lpld.office365
 import java.io.IOException
 
 import akka.NotUsed
+import akka.actor.ActorRefFactory
 import akka.stream.SourceShape
 import akka.stream.scaladsl.{Flow, GraphDSL, Merge, Source, UnzipWith}
+import com.github.lpld.office365.Office365Api.queryParamsFor
 import com.github.lpld.office365.model._
 import play.api.libs.json._
 
-/**
-  * A part of the API that contains some items in it. For example:
-  *  - / (root)
-  *  - /Mailfolders/Inbox
-  *  - /Calendars/AAMkAGI2TG93AAA=
-  * etc.
-  *
-  * It supports basic operations for manipulating items (for now, only retrieving)
-  */
-trait ItemBox[F <: Folder] {
-  /**
-    * Get an item by id.
-    */
-  def get[I <: Item with ChildOf[_ <: F] : Schema : Reads : Api](id: String): Source[I, NotUsed]
-
-  /**
-    * Query multiple items, optionally specifying filter and orderby parameters.
-    */
-  def query[I <: Item with ChildOf[_ <: F] : Schema : Reads : Api](filter: String = null, orderby: String = null): Source[I, NotUsed]
-
-  /**
-    * Query all items.
-    */
-  def queryAll[I <: Item with ChildOf[_ <: F] : Schema : Reads : Api]: Source[I, NotUsed] = query(null, null)
-}
+import scala.concurrent.Future
 
 object Office365Api {
   val defaultUrl = "https://outlook.office.com/api/v2.0/me"
 
-  def apply(client: HttpClient,
+  def apply(httpClient: HttpClient,
             credential: CredentialData,
             defaultPageSize: Int = 100,
             preferredBodyType: BodyType = BodyType.Html) =
     new Office365Api(
-      client,
-      Office365Api.defaultUrl,
+      httpClient,
       credential,
-      preferredBodyType,
-      defaultPageSize
+      Office365Api.defaultUrl,
+      defaultPageSize,
+      preferredBodyType
     )
-}
 
-/**
-  * API client, that takes care of API paths, item schemas and pagination. Generally, should be
-  * created using companion object.
-  *
-  * It extends {{{ItemBox[Folder]}}}, which basically means that it's a storage for items of all possible types.
-  *
-  * @author leopold
-  * @since 14/05/18
-  */
-class Office365Api(client: HttpClient,
-                   baseUrl: String,
-                   credential: CredentialData,
-                   preferredBodyType: BodyType = BodyType.Html,
-                   defaultPageSize: Int = 100) extends ItemBox[Folder] {
+  def schemaFor[I: Schema]: Schema[I] = implicitly[Schema[I]]
 
-  private val tokenSource = TokenSource(credential)
+  def queryParamsFor[I: Schema]: List[(String, String)] = queryParamsFor[I](null, null)
 
-  private def itemBox[F <: Folder](pathPrefix: String): ItemBox[F] =
-    new ItemBoxImpl[F](client, pathPrefix, defaultPageSize)
-
-  private val rootBox = itemBox[Folder]("")
-
-  override def get[I <: Item with ChildOf[_ <: Folder] : Schema : Reads : Api](id: String): Source[I, NotUsed] =
-    rootBox.get[I](id)
-
-  override def query[I <: Item with ChildOf[_ <: Folder] : Schema : Reads : Api](filter: String, orderby: String): Source[I, NotUsed] =
-    rootBox.query[I](filter, orderby)
-
-  /**
-    * Return ItemBox for a specific folder
-    */
-  def from[F <: Folder : Api](folderType: FolderType[F], id: String): ItemBox[F] =
-    itemBox[F](s"${implicitly[Api[F]].path}/$id")
-
-  /**
-    * Return ItemBox for mail folder with well-known name
-    */
-  def from(wellKnownFolder: WellKnownFolder): ItemBox[OMailFolder] = from(FolderType.MailFolder, wellKnownFolder.name)
-
-  def close(): Unit = tokenSource.close()
-
-  private def request[I: Reads](method: String)(path: String, queryParams: Seq[(String, String)]): Source[I, NotUsed] =
-    tokenSource.credential
-      .mapAsync(1)(accessToken =>
-        client.request[I](
-          url = s"$baseUrl$path",
-          method = method,
-          httpHeaders = Seq(
-            "Authorization" -> s"Bearer $accessToken",
-            "Accept" -> "application/json",
-            "Prefer" -> s"""outlook.body-content-type="${preferredBodyType.name}""""
-          ),
-          queryParams = queryParams
-        )
-      )
-
-  private def reqGet[I: Reads](path: String, queryParams: Seq[(String, String)] = Seq.empty): Source[I, NotUsed] =
-    request("GET")(path, queryParams)
-
-  /**
-    * Handle 404: produce empty stream in case of 404 error.
-    */
-  private def handle404[T]: Flow[T, T, NotUsed] =
-    Flow[T]
-      .map(List(_))
-      .recover {
-        case Office365ResponseException(404, _, _) => Nil
-      }
-      .mapConcat(identity)
-
-  private def schemaFor[I: Schema]: Schema[I] = implicitly[Schema[I]]
-
-  private def queryParamsFor[I: Schema]: List[(String, String)] = queryParamsFor[I](null, null)
-
-  private def queryParamsFor[I: Schema](filter: String, orderby: String): List[(String, String)] = {
+  def queryParamsFor[I: Schema](filter: String, orderby: String): List[(String, String)] = {
     val schema = schemaFor[I]
 
     def expand: String =
@@ -144,64 +51,188 @@ class Office365Api(client: HttpClient,
     ).filterNot(_._2 == null)
   }
 
-  private def extractPath(fullUrl: String): String = {
+  implicit val unitReads = Reads { _ => JsSuccess(()) }
+}
+
+/**
+  * API client, that takes care of API paths, item schemas and pagination. Generally, should be
+  * created using companion object.
+  *
+  * It extends {{{ItemBox[Folder]}}}, which basically means that it's a storage for items of all possible types.
+  *
+  * @author leopold
+  * @since 14/05/18
+  */
+class Office365Api private(lowLevelClient: LowLevelClient, defaultPageSize: Int)
+  extends ItemBox[Folder](lowLevelClient, "", defaultPageSize) {
+
+  def this(httpClient: HttpClient, credential: CredentialData,
+           baseUrl: String, defaultPageSize: Int = 100, preferredBodyType: BodyType = BodyType.Html) =
+    this(new LowLevelClient(httpClient, credential, baseUrl, preferredBodyType), defaultPageSize)
+
+  /**
+    * Get item by ID
+    */
+  def get[I <: Item : Schema : Reads : Api](id: String): Source[I, NotUsed] =
+    lowLevelClient
+      .get[I](s"${implicitly[Api[I]].path}/$id", queryParamsFor[I])
+      .via(handle404)
+
+  /**
+    * Return ItemBox for a specific folder
+    */
+  def from[F <: Folder : Api](folderType: FolderType[F], id: String): ItemBox[F] =
+    new ItemBox[F](lowLevelClient, s"${implicitly[Api[F]].path}/$id", defaultPageSize)
+
+  /**
+    * Return ItemBox for mail folder with well-known name
+    */
+  def from(wellKnownFolder: WellKnownFolder): ItemBox[OMailFolder] = from(FolderType.MailFolder, wellKnownFolder.name)
+
+  private implicit val ur = Office365Api.unitReads
+
+  /**
+    * Send a message
+    * todo: not tested
+    */
+  def sendmail[M <: OMessage : Writes](message: M, saveToSentItems: Boolean = true) =
+    lowLevelClient.post[SendMessage[M], Unit]("/sendmail", SendMessage(message, saveToSentItems))
+
+
+  def close(): Unit = lowLevelClient.close()
+
+  /**
+    * Handle 404: produce empty stream in case of 404 error.
+    */
+  private def handle404[T]: Flow[T, T, NotUsed] =
+    Flow[T]
+      .map(List(_))
+      .recover {
+        case Office365ResponseException(404, _, _) => Nil
+      }
+      .mapConcat(identity)
+}
+
+private class LowLevelClient(httpClient: HttpClient,
+                             credential: CredentialData,
+                             baseUrl: String,
+                             preferredBodyType: BodyType) {
+
+  def get[I: Reads](path: String, queryParams: Seq[(String, String)] = Seq.empty): Source[I, NotUsed] =
+    request("GET", path, queryParams)
+
+  def post[OUT: Writes, IN: Reads](path: String, payload: OUT): Source[IN, NotUsed] =
+    request("POST", path, Nil, payload)
+
+  //  def patch[I: Reads](path: String, queryParams: Seq[(String, String)] = Seq.empty): Source[I, NotUsed] =
+  //    request("PATCH")(path, queryParams)
+
+  def extractPath(fullUrl: String): String = {
     require(fullUrl startsWith baseUrl)
     fullUrl substring baseUrl.length
   }
 
-  private class ItemBoxImpl[F <: Folder](client: HttpClient, pathPrefix: String, defaultPageSize: Int = 100) extends ItemBox[F] {
+  private val tokenSource = TokenSource(credential)
+  def close(): Unit = tokenSource.close()
 
-    override def get[I <: Item with ChildOf[_ <: F] : Schema : Reads : Api](id: String): Source[I, NotUsed] =
-      reqGet[I](s"${pathFor[I]}/$id", queryParamsFor[I])
-        .via(handle404)
+  private def request[IN: Reads](method: String, path: String, queryParams: Seq[(String, String)]): Source[IN, NotUsed] =
+    makeRequest(headers => {
+      httpClient.request[IN](
+        url = s"$baseUrl$path",
+        method = method,
+        httpHeaders = headers,
+        queryParams = queryParams
+      )
+    })
 
-    override def query[I <: Item with ChildOf[_ <: F] : Schema : Reads : Api](filter: String, orderby: String): Source[I, NotUsed] =
-      getPaged[I](queryParamsFor[I](filter, orderby): _*)
+  private def request[OUT: Writes, IN: Reads](method: String, path: String, queryParams: Seq[(String, String)], out: OUT): Source[IN, NotUsed] =
+    makeRequest(headers => {
+      httpClient.request[OUT, IN](
+        url = s"$baseUrl$path",
+        method = method,
+        httpHeaders = headers,
+        queryParams = queryParams,
+        out
+      )
+    })
 
-    /**
-      * Perform a paginated query to the API.
-      */
-    def getPaged[I: Api : Reads](params: (String, String)*): Source[I, NotUsed] = {
-      Source.fromGraph(GraphDSL.create() { implicit b =>
-        import GraphDSL.Implicits._
+  private def makeRequest[T](f: Seq[(String, String)] => Future[T]): Source[T, NotUsed] =
+    tokenSource.credential
+      .mapAsync(1)(accessToken => {
+        val httpHeaders = Seq(
+          "Authorization" -> s"Bearer $accessToken",
+          "Accept" -> "application/json",
+          "Prefer" -> s"""outlook.body-content-type="${preferredBodyType.name}""""
+        )
 
-        // loading first page from the API
-        val firstPage = reqGet[Many[I]](pathFor[I], params ++ List("$top" -> s"$defaultPageSize", "$skip" -> "0"))
+        f(httpHeaders)
+      })
 
-        // merging results from firstPage and feedback loop
-        val merge = b.add(Merge[Many[I]](2))
+}
 
-        // unzipping Many into List[I] and Option[String] representing next records url.
-        val unzip = b.add(UnzipWith((many: Many[I]) => (many.value, many.`@odata.nextLink`)))
+/**
+  * A part of the API that contains some items in it. For example:
+  *  - / (root)
+  *  - /Mailfolders/Inbox
+  *  - /Calendars/AAMkAGI2TG93AAA=
+  * etc.
+  *
+  * It supports basic operations for manipulating items (for now, only retrieving)
+  */
+class ItemBox[F <: Folder](client: LowLevelClient, pathPrefix: String, defaultPageSize: Int = 100) {
 
-        // in order for the cycle to complete we need to add takeWhile here. otherwise merge stage
-        // will never be completed.
-        val nextPagePath = Flow[Option[String]]
-          .takeWhile(_.isDefined)
-          .mapConcat(_.toList)
-          .map(extractPath)
+  /**
+    * Query multiple items, optionally specifying filter and orderby parameters.
+    */
+  def query[I <: Item with ChildOf[_ <: F] : Schema : Reads : Api](filter: String = null, orderby: String = null): Source[I, NotUsed] =
+    getPaged[I](queryParamsFor[I](filter, orderby): _*)
 
-        // loading next page from the API
-        val loadPage = Flow[String].flatMapConcat(reqGet[Many[I]](_))
+  /**
+    * Query all items.
+    */
+  def queryAll[I <: Item with ChildOf[_ <: F] : Schema : Reads : Api]: Source[I, NotUsed] = query(null, null)
 
-        val flatten = b.add(Flow[List[I]].mapConcat(identity))
+  /**
+    * Perform a paginated query to the API.
+    */
+  private def getPaged[I: Api : Reads](params: (String, String)*): Source[I, NotUsed] = {
+    Source.fromGraph(GraphDSL.create() { implicit b =>
+      import GraphDSL.Implicits._
 
-        // the graph itself:
-        // @formatter:off
+      // loading first page from the API
+      val firstPage = client.get[Many[I]](pathFor[I], params ++ List("$top" -> s"$defaultPageSize", "$skip" -> "0"))
+
+      // merging results from firstPage and feedback loop
+      val merge = b.add(Merge[Many[I]](2))
+
+      // unzipping Many into List[I] and Option[String] representing next records url.
+      val unzip = b.add(UnzipWith((many: Many[I]) => (many.value, many.`@odata.nextLink`)))
+
+      // in order for the cycle to complete we need to add takeWhile here. otherwise merge stage
+      // will never be completed.
+      val nextPagePath = Flow[Option[String]]
+        .takeWhile(_.isDefined)
+        .mapConcat(_.toList)
+        .map(client.extractPath)
+
+      // loading next page from the API
+      val loadPage = Flow[String].flatMapConcat(client.get[Many[I]](_))
+
+      val flatten = b.add(Flow[List[I]].mapConcat(identity))
+
+      // the graph itself:
+      // @formatter:off
       firstPage ~> merge             ~>                 unzip.in
                    merge <~ loadPage <~ nextPagePath <~ unzip.out1
                                                         unzip.out0 ~> flatten
       // @formatter:on
 
-        SourceShape(flatten.out)
-      })
-    }
-
-    private def pathFor[I: Api]: String = pathPrefix + implicitly[Api[I]].path
+      SourceShape(flatten.out)
+    })
   }
 
+  private def pathFor[I: Api]: String = pathPrefix + implicitly[Api[I]].path
 }
-
 class Office365Exception(message: String) extends IOException(message)
 
 case class Office365ResponseException(status: Int, statusText: String, errorDetails: String)

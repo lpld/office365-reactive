@@ -3,9 +3,9 @@ package com.github.lpld.office365
 import java.time.Instant
 
 import akka.actor.ActorSystem
-import akka.stream.{ActorMaterializer, Attributes, Inlet, SinkShape}
-import akka.stream.scaladsl.{GraphDSL, Sink, Source}
+import akka.stream.scaladsl.{Sink, Source}
 import akka.stream.stage.{GraphStage, GraphStageLogic, InHandler}
+import akka.stream.{ActorMaterializer, Attributes, Inlet, SinkShape}
 import akka.testkit.TestKit
 import com.github.lpld.office365.TokenRefresher.TokenSuccess
 import com.github.lpld.office365.model.{OMessage, WellKnownFolder}
@@ -44,7 +44,7 @@ class Office365ApiSpec
 
   val http = mock[HttpClient]
   val api = new Office365Api(
-    client = http,
+    httpClient = http,
     baseUrl = "http://test.com",
     credential = CredentialData(
       Some(TokenSuccess("xxx", expiresAt = System.currentTimeMillis() + 20.minutes.toMillis)),
