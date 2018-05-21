@@ -26,7 +26,7 @@ object Office365ApiExamples extends App {
     httpClient = new PlayWsHttpClient(StandaloneAhcWSClient()),
     credential = CredentialData(
       initialToken = Some(TokenSuccess(
-        "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsIng1dCI6ImlCakwxUmNxemhpeTRmcHhJeGRacW9oTTJZayIsImtpZCI6ImlCakwxUmNxemhpeTRmcHhJeGRacW9oTTJZayJ9.eyJhdWQiOiJodHRwczovL291dGxvb2sub2ZmaWNlMzY1LmNvbS8iLCJpc3MiOiJodHRwczovL3N0cy53aW5kb3dzLm5ldC84NWQyYTViYi0xZDlmLTQxMDUtYTRjNi0zMjczOTAyMTc5NmIvIiwiaWF0IjoxNTI2ODQ5MzY0LCJuYmYiOjE1MjY4NDkzNjQsImV4cCI6MTUyNjg1MzI2NCwiYWNjdCI6MCwiYWNyIjoiMSIsImFpbyI6IkFTUUEyLzhIQUFBQVZhek9USHdXZmdENjNzSUsyS0lycEJ5eWtoeWNkZjFJV0pzRUY2dG1VZGM9IiwiYW1yIjpbInB3ZCJdLCJhcHBfZGlzcGxheW5hbWUiOiJUaHJlYWRCb3QiLCJhcHBpZCI6IjI4NzRiM2MxLTBlMzktNGYzNC1hMDI5LTllNzE4MTU0NjhlZSIsImFwcGlkYWNyIjoiMSIsImVfZXhwIjoyNjI4MDAsImVuZnBvbGlkcyI6W10sImZhbWlseV9uYW1lIjoiU2l2YXNob3YiLCJnaXZlbl9uYW1lIjoiTGV2IiwiaXBhZGRyIjoiNDYuOTguMjQ4LjY0IiwibmFtZSI6IkxldiBTaXZhc2hvdiIsIm9pZCI6IjM0YzM2NjkwLWJlYzItNDJiOC04MTkyLWJkMjQ2YTQ2MjI0ZiIsInB1aWQiOiIxMDAzN0ZGRTlDQkFGNEQ5IiwicHdkX2V4cCI6Ijk0MzQ0MCIsInB3ZF91cmwiOiJodHRwczovL3BvcnRhbC5taWNyb3NvZnRvbmxpbmUuY29tL0NoYW5nZVBhc3N3b3JkLmFzcHgiLCJzY3AiOiJDYWxlbmRhcnMuUmVhZFdyaXRlIGZ1bGxfYWNjZXNzX2FzX3VzZXIgTWFpbC5SZWFkV3JpdGUgTWFpbC5TZW5kIiwic3ViIjoiVWFwWTI5UmZhQlR6VU1UN216d19EdUx0X3ZJSlNaejU3NV9wbnZfcjhlTSIsInRpZCI6Ijg1ZDJhNWJiLTFkOWYtNDEwNS1hNGM2LTMyNzM5MDIxNzk2YiIsInVuaXF1ZV9uYW1lIjoibGV2QHlveGVsLm5ldCIsInVwbiI6ImxldkB5b3hlbC5uZXQiLCJ1dGkiOiJPRkE0cmMyclJrMldBLWk5c3ZnYUFBIiwidmVyIjoiMS4wIn0.DRjtf2Xf49qaWtfWkmJrarLGLMIfwgUBA36GdpYao9TNxCSmyHNaQxZ57pQVtHuco8wNG-r03aaeZGFU2MbMoND1QI4eDYiJgCq-5r8Cyo6lyTJlpjFLSFiXqW__JzCwZT1O24_MtfSR2R_pHK73pkUp7_r6RM8q6zflQ5DLRjhqOxo_azAckLUgjhP06uJxPHti5JgxMlBbkZyLtDYEXllybGcvSj5s3x9DfBEfITYUARjjpey3XXMKOC64I6nTyuVPM_8l4eQQQmg-ZrL3Cr104UnWp2a6cC3Jjz7zj1LTTs3eWQVfqL53B1oEnzObd9Do32anUm3FDQHV6HsSLA",
+        System.getProperty("office.token"),
         System.currentTimeMillis() + 10.minutes.toMillis
       )),
       refreshAction = () => Future.successful(TokenFailure(critical = true, "Cannot refresh"))
@@ -34,11 +34,33 @@ object Office365ApiExamples extends App {
     defaultPageSize = 5
   )
 
-  loadMessages()
-  loadMessagesWithExtendedProperty()
-  loadMessageById()
-  loadExtendedMessageById()
-  loadMessagesFromFolder()
+  sendMessage()
+  //  loadMessages()
+  //  loadMessagesWithExtendedProperty()
+  //  loadMessageById()
+  //  loadExtendedMessageById()
+  //  loadMessagesFromFolder()
+  api.close()
+  Await.result(system.terminate(), 10.seconds)
+
+  case class NewMessage(Subject: String,
+                        ToRecipients: List[Recipient],
+                        Body: ItemBody) extends OMessage
+
+  object NewMessage {
+    implicit val writes = Json.writes[NewMessage]
+  }
+
+  def sendMessage(): Unit = {
+    val send = api.sendmail(NewMessage(
+      Subject = "Testing api",
+      ToRecipients = List(Recipient(EmailAddress(Address = Some("lsivashov@gmail.com"), Name = None))),
+      Body = ItemBody(Content = "test123", ContentType = "Text")
+    ))
+
+    Await.result(send.runWith(Sink.head), 5.seconds)
+    println("done")
+  }
 
   def loadMessages(): Unit = {
 

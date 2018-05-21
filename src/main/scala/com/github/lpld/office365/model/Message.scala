@@ -47,8 +47,9 @@ object MessageIdOnly {
   implicit val schema = Schema[MessageIdOnly]
 }
 
-case class SendMessage[M <: OMessage](Message: M, SavetoSentItems: Boolean)
+case class SendMessage[M <: OMessage](Message: M, SaveToSentItems: Boolean)
 object SendMessage {
-  implicit def writes[M <: OMessage : Writes] = Json.writes[SendMessage[M]]
+  implicit def writes[M <: OMessage : Writes]: Writes[SendMessage[M]] = Json.writes[SendMessage[M]]
+//  implicit def out[M <: OMessage: Writes]: Out[SendMessage[M]] = writes[M]
 }
 

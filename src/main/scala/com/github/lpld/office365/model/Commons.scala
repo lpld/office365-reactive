@@ -11,10 +11,10 @@ case class SingleValueProperty(PropertyId: String, Value: String) extends Model
 
 trait Model
 object Model {
-  implicit val bodyReads = Json.reads[ItemBody]
-  implicit val emailAddressReads = Json.reads[EmailAddress]
-  implicit val recipientsReads = Json.reads[Recipient]
-  implicit val singleValuePropertyReads = Json.reads[SingleValueProperty]
+  implicit val body = Json.format[ItemBody]
+  implicit val emailAddress = Json.format[EmailAddress]
+  implicit val recipients = Json.format[Recipient]
+  implicit val singleValueProperty = Json.format[SingleValueProperty]
 }
 
 /**
@@ -30,4 +30,9 @@ trait ExtendedPropertiesSupport {
   def getProp(prop: ExtendedProperty): Option[String] = singleValueProps.get(prop.propertyId)
 }
 
+sealed abstract class BodyType(val name: String)
 
+object BodyType {
+  case object Text extends BodyType("text")
+  case object Html extends BodyType("html")
+}

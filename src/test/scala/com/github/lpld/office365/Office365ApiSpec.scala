@@ -3,15 +3,14 @@ package com.github.lpld.office365
 import java.time.Instant
 
 import akka.actor.ActorSystem
+import akka.stream.ActorMaterializer
 import akka.stream.scaladsl.{Sink, Source}
-import akka.stream.stage.{GraphStage, GraphStageLogic, InHandler}
-import akka.stream.{ActorMaterializer, Attributes, Inlet, SinkShape}
 import akka.testkit.TestKit
 import com.github.lpld.office365.TokenRefresher.TokenSuccess
 import com.github.lpld.office365.model.{OMessage, WellKnownFolder}
 import org.scalamock.scalatest.MockFactory
 import org.scalatest._
-import play.api.libs.json.{Json, Reads}
+import play.api.libs.json.Json
 
 import scala.concurrent.duration.DurationLong
 import scala.concurrent.{Await, ExecutionContext, Future}
@@ -111,7 +110,7 @@ class Office365ApiSpec
           )))
 
 
-      def expectFirstPage() =
+      def expectFirstPage(nextUrl: String) =
         expectPageCall(
           "/messages",
           Map(
@@ -122,17 +121,17 @@ class Office365ApiSpec
             "$skip" -> "0"
           ),
           firstPageItems,
-          Some("http://test.com/messages/next")
+          Some(nextUrl)
         )
 
       "load only pages that are being read from source" in {
-        expectFirstPage()
+        expectFirstPage("http://test.com/messages/nextItems")
         // loading only 2 entities from the first page:
         run(pagedResult.take(2)) shouldEqual firstPageItems
       }
 
       "load additional pages when needed" in {
-        expectFirstPage()
+        expectFirstPage("http://test.com/messages/next")
         expectPageCall("/messages/next", Map(), secondPageItems, None)
 
         run(pagedResult.take(3)) shouldEqual firstPageItems :+ secondPageItems.head
@@ -161,8 +160,8 @@ class Office365ApiSpec
 
   private def expectHttpRequest[T](method: String, path: String,
                                    paramsMatcher: Map[String, String] => Boolean = _ => true) =
-    (http.request[T](_: String, _: String, _: Seq[(String, String)], _: Seq[(String, String)])(_: Reads[T]))
-      .expects(where { (url, httpMethod, headers, queryParams, _) =>
+    (http.request[Unit, T](_: String, _: String, _: Seq[(String, String)], _: Seq[(String, String)], _: Unit)(_: Out[Unit], _: In[T]))
+      .expects(where { (url, httpMethod, headers, queryParams, _, _, _) =>
         url == "http://test.com" + path &&
           httpMethod == method &&
           headers.find(_._1 == "Authorization").exists(_._2 == "Bearer xxx") &&
@@ -171,20 +170,5 @@ class Office365ApiSpec
 
 
   private def run[I](source: Source[I, _]) = Await.result(source.runWith(Sink.seq), 100.millis)
-
-}
-
-class SinkReader[T] extends GraphStage[SinkShape[T]] {
-  private val in: Inlet[T] = Inlet("sink-reader")
-
-  override val shape: SinkShape[T] = SinkShape(in)
-
-  override def createLogic(inheritedAttributes: Attributes): GraphStageLogic =
-    new GraphStageLogic(shape) {
-      setHandler(in, new InHandler {
-        override def onPush(): Unit = ???
-      })
-    }
-
 
 }

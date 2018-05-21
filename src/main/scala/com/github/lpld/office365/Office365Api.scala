@@ -1,16 +1,11 @@
 package com.github.lpld.office365
 
-import java.io.IOException
-
 import akka.NotUsed
-import akka.actor.ActorRefFactory
 import akka.stream.SourceShape
 import akka.stream.scaladsl.{Flow, GraphDSL, Merge, Source, UnzipWith}
 import com.github.lpld.office365.Office365Api.queryParamsFor
 import com.github.lpld.office365.model._
-import play.api.libs.json._
-
-import scala.concurrent.Future
+import play.api.libs.json.{Json, Reads, Writes}
 
 object Office365Api {
   val defaultUrl = "https://outlook.office.com/api/v2.0/me"
@@ -50,8 +45,6 @@ object Office365Api {
       "$expand" -> expand
     ).filterNot(_._2 == null)
   }
-
-  implicit val unitReads = Reads { _ => JsSuccess(()) }
 }
 
 /**
@@ -71,12 +64,14 @@ class Office365Api private(lowLevelClient: LowLevelClient, defaultPageSize: Int)
     this(new LowLevelClient(httpClient, credential, baseUrl, preferredBodyType), defaultPageSize)
 
   /**
-    * Get item by ID
+    * Get an item by ID
     */
-  def get[I <: Item : Schema : Reads : Api](id: String): Source[I, NotUsed] =
+  def get[I <: Item : Schema : Reads : Api](id: String): Source[I, NotUsed] = {
+
     lowLevelClient
       .get[I](s"${implicitly[Api[I]].path}/$id", queryParamsFor[I])
       .via(handle404)
+  }
 
   /**
     * Return ItemBox for a specific folder
@@ -89,15 +84,12 @@ class Office365Api private(lowLevelClient: LowLevelClient, defaultPageSize: Int)
     */
   def from(wellKnownFolder: WellKnownFolder): ItemBox[OMailFolder] = from(FolderType.MailFolder, wellKnownFolder.name)
 
-  private implicit val ur = Office365Api.unitReads
-
   /**
     * Send a message
-    * todo: not tested
     */
-  def sendmail[M <: OMessage : Writes](message: M, saveToSentItems: Boolean = true) =
+  def sendmail[M <: OMessage : Writes](message: M, saveToSentItems: Boolean = true): Source[Unit, NotUsed] = {
     lowLevelClient.post[SendMessage[M], Unit]("/sendmail", SendMessage(message, saveToSentItems))
-
+  }
 
   def close(): Unit = lowLevelClient.close()
 
@@ -107,69 +99,9 @@ class Office365Api private(lowLevelClient: LowLevelClient, defaultPageSize: Int)
   private def handle404[T]: Flow[T, T, NotUsed] =
     Flow[T]
       .map(List(_))
-      .recover {
-        case Office365ResponseException(404, _, _) => Nil
-      }
+      .recover { case HttpResponseException(404, _, _) => Nil }
       .mapConcat(identity)
 }
-
-private class LowLevelClient(httpClient: HttpClient,
-                             credential: CredentialData,
-                             baseUrl: String,
-                             preferredBodyType: BodyType) {
-
-  def get[I: Reads](path: String, queryParams: Seq[(String, String)] = Seq.empty): Source[I, NotUsed] =
-    request("GET", path, queryParams)
-
-  def post[OUT: Writes, IN: Reads](path: String, payload: OUT): Source[IN, NotUsed] =
-    request("POST", path, Nil, payload)
-
-  //  def patch[I: Reads](path: String, queryParams: Seq[(String, String)] = Seq.empty): Source[I, NotUsed] =
-  //    request("PATCH")(path, queryParams)
-
-  def extractPath(fullUrl: String): String = {
-    require(fullUrl startsWith baseUrl)
-    fullUrl substring baseUrl.length
-  }
-
-  private val tokenSource = TokenSource(credential)
-  def close(): Unit = tokenSource.close()
-
-  private def request[IN: Reads](method: String, path: String, queryParams: Seq[(String, String)]): Source[IN, NotUsed] =
-    makeRequest(headers => {
-      httpClient.request[IN](
-        url = s"$baseUrl$path",
-        method = method,
-        httpHeaders = headers,
-        queryParams = queryParams
-      )
-    })
-
-  private def request[OUT: Writes, IN: Reads](method: String, path: String, queryParams: Seq[(String, String)], out: OUT): Source[IN, NotUsed] =
-    makeRequest(headers => {
-      httpClient.request[OUT, IN](
-        url = s"$baseUrl$path",
-        method = method,
-        httpHeaders = headers,
-        queryParams = queryParams,
-        out
-      )
-    })
-
-  private def makeRequest[T](f: Seq[(String, String)] => Future[T]): Source[T, NotUsed] =
-    tokenSource.credential
-      .mapAsync(1)(accessToken => {
-        val httpHeaders = Seq(
-          "Authorization" -> s"Bearer $accessToken",
-          "Accept" -> "application/json",
-          "Prefer" -> s"""outlook.body-content-type="${preferredBodyType.name}""""
-        )
-
-        f(httpHeaders)
-      })
-
-}
-
 /**
   * A part of the API that contains some items in it. For example:
   *  - / (root)
@@ -233,10 +165,47 @@ class ItemBox[F <: Folder](client: LowLevelClient, pathPrefix: String, defaultPa
 
   private def pathFor[I: Api]: String = pathPrefix + implicitly[Api[I]].path
 }
-class Office365Exception(message: String) extends IOException(message)
 
-case class Office365ResponseException(status: Int, statusText: String, errorDetails: String)
-  extends Office365Exception(s"$status - $statusText: $errorDetails")
+
+/**
+  * Class that is responsible for performing http queries with valid OAuth access token and serialize/deserialize data.
+  */
+private class LowLevelClient(httpClient: HttpClient,
+                             credential: CredentialData,
+                             baseUrl: String,
+                             preferredBodyType: BodyType) {
+
+  def get[I: In](path: String, queryParams: Seq[(String, String)] = Seq.empty): Source[I, NotUsed] =
+    request("GET", path, queryParams, ())
+
+  def post[OUT: Out, IN: In](path: String, payload: OUT): Source[IN, NotUsed] =
+    request("POST", path, Nil, payload)
+
+  def extractPath(fullUrl: String): String = {
+    require(fullUrl startsWith baseUrl)
+    fullUrl substring baseUrl.length
+  }
+
+  private val tokenSource = TokenSource(credential)
+  def close(): Unit = tokenSource.close()
+
+  private def request[OUT: Out, IN: In](method: String, path: String, queryParams: Seq[(String, String)], out: OUT): Source[IN, NotUsed] =
+
+    tokenSource.credential
+      .mapAsync(1)(accessToken => {
+        httpClient.request[OUT, IN](
+          url = s"$baseUrl$path",
+          method = method,
+          httpHeaders = Seq(
+            "Authorization" -> s"Bearer $accessToken",
+            "Accept" -> "application/json",
+            "Prefer" -> s"""outlook.body-content-type="${preferredBodyType.name}""""
+          ),
+          queryParams = queryParams,
+          out
+        )
+      })
+}
 
 case class Many[I](value: List[I],
                    `@odata.context`: String,
@@ -244,13 +213,4 @@ case class Many[I](value: List[I],
 
 object Many {
   implicit def manyReads[I: Reads]: Reads[Many[I]] = Json.reads[Many[I]]
-}
-sealed abstract class BodyType(val name: String)
-
-object BodyType {
-
-  case object Text extends BodyType("text")
-
-  case object Html extends BodyType("html")
-
 }
