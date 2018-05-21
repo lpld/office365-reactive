@@ -63,7 +63,6 @@ class Office365ApiSpec
           _ == Map("$select" -> "Id,Subject,ReceivedDateTime")
         ).returning(Future.successful(MsgItem("abc", "yyy", Instant.now())))
 
-
         run(api.get[MsgItem]("abc"))
           .loneElement
           .Subject shouldEqual "yyy"

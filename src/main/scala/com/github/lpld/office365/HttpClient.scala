@@ -23,6 +23,10 @@ trait HttpClient {
                                 payload: OUT = ()): Future[IN]
 }
 
+object HttpClient {
+  implicit def playWs2HttpClient(ws: StandaloneWSClient) = new PlayWsHttpClient(ws)
+}
+
 /**
   * Deserializer for http response.
   */

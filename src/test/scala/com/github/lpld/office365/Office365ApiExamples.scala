@@ -23,7 +23,7 @@ object Office365ApiExamples extends App {
   implicit val materializer = ActorMaterializer()
 
   val api = Office365Api(
-    httpClient = new PlayWsHttpClient(StandaloneAhcWSClient()),
+    httpClient = StandaloneAhcWSClient(),
     credential = CredentialData(
       initialToken = Some(TokenSuccess(
         System.getProperty("office.token"),
