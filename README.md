@@ -50,16 +50,21 @@ api.close()
 system.terminate()
 ```
 
+
+
 ## Defining a model
 
 Define a case class with a set of fields that are needed. It should extend one of the traits that represent standard Outlook item types: `OMailFolder, OMessage, OCalendarGroup, OCalendar, OEvent, OCalendarView, OCalendarView, OContact, OTaskGroup, OTaskFolder, OTask`:
 
 ```scala
-import com.github.lpld.office365.model.OMessage
+import com.github.lpld.office365.model.{OMessage, Recipient}
 import com.github.lpld.office365.Schema
 import play.api.libs.json.{Json, Writes}
 
-case class EmailMessage(Id: String, Subject: String) extends OMessage
+case class EmailMessage(Id: String,
+                        Subject: String,
+                        From: Option[Recipient],
+                        ToRecipients: List[Recipient]) extends OMessage
 
 // companion object with the Schema and Play's json Reads/Writes:
 object EmailMessage {
@@ -73,24 +78,37 @@ object EmailMessage {
 
 The list of standard fields can be found in the official Office365 API documentation: https://msdn.microsoft.com/en-us/office/office365/api/api-catalog
 
+
+
 ## Querying the API
 
-1. Getting item by ID:
+Methods that represent queries to the API return `Source[I, NotUsed]`, where `I` is a type of requested items. No actuall http requests will be done until the source is materialzed.
+
+
+
+#### Get an item by ID
 
 ```scala
-item: Source[EmailMessage, NotUsed] = api.get[EmailMessage](itemId)
+// source containing zero or one element
+val item: Source[EmailMessage, NotUsed] = api.get[EmailMessage](itemId)
 
 item.runWith(...)
 ```
 
-This will result in the following request: `GET /messages/{itemId}?$select=Id,Subject`
+This will result in the following request:
 
-2. Getting multiple items:
+```
+ GET /messages/{itemId}?$select=Id,Subject,From,ToRecipients
+```
+
+
+
+#### Get multiple items:
 
 ```scala
-items: Source[EmailMessage, NotUsed] = 
+val items: Source[EmailMessage, NotUsed] = 
   api.query[EmailMessage](
-    filter = "ReceivedDateTime ge '2018-01-01T00:10:00Z'",
+    filter = "ReceivedDateTime ge 2018-01-01T00:10:00Z",
     orderby = "ReceivedDateTime"
   )
 
@@ -101,11 +119,81 @@ This will result in a series of requests to the API, each one loading the next p
 
 ```
 GET /messages
-	?$select=Id,Subject
-	&$filter=ReceivedDateTime ge '2018-01-01T00:10:00Z'
-	&orderby=ReceivedDateTime
-	&top=100
-	&skip=0
+	?$select=Id,Subject,From,ToRecipients
+	&$filter=ReceivedDateTime ge 2018-01-01T00:10:00Z
+	&$orderby=ReceivedDateTime
+	&$top=100
+	&$skip=0
 ```
+
+This method is lazy, in a sense that it does not load additional pages until they are actually needed. It means that the following example will load only the first page of data even if more items are available:
+
+```scala
+val items = api.queryAll[EmailMessage]
+
+items.take(1).runForeach(println)
+```
+
+
+
+#### Get items from a specific folder
+
+```scala
+import com.github.lpld.office365.model.{OEvent, FolderType}
+import com.github.lpld.office365.Schema
+import play.api.libs.json.Json
+
+// Model for an event item:
+case class Event(Id: String, Subject: String) extends OEvent
+object Event {
+  implicit val schema = Schema[Event]
+  implicit val reads = Json.reads[Event]
+}
+
+// querying events from a specific calendar folder:
+val calendarId = "<id of the calendar>"
+val events = api
+	.from(FolderType.Calendar, calendarId)
+	.queryAll[Event]
+
+events.runWith(...)
+```
+
+Following HTTP request will be executed:
+
+```
+GET /calendars/<id of the calendar>/events&$top=100&$skip=0
+```
+
+, followed by requests to load rest of the pages.
+
+
+
+#### Get messages from a folder with a well-known name
+
+```scala
+import com.github.lpld.office365.model.WellKnownFolder
+
+val items: Source[EmailMessage, NotUsed] =
+	api
+		.from(WellKnownFolder.SentItems) // mailbox folder with a well-known name
+		.query[EmailMessage](
+          filter = "ReceivedDateTime ge 2018-01-01T00:10:00Z"
+        )
+
+items.runWith(...)
+```
+
+Following request will be executed:
+
+```
+GET /mailfolders/SentItems/messages
+	?$select=Id,Subject,From,ToRecipients
+    &$filter=ReceivedDateTime ge 2018-01-01T00:10:00Z
+    &$top=100
+    &$skip=0
+```
+
+
 
 to be continued...
