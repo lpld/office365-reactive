@@ -192,4 +192,55 @@ GET /mailfolders/SentItems/messages
 
 
 
+## Extended properties support
+
+reactive-office365 has a very limited support for Outlook Extended Properties (https://msdn.microsoft.com/en-us/office/office365/api/extended-properties-rest-operations). Currently, only reading of `SingleValueExtendedProperties` is supported:
+
+```scala
+import com.github.lpld.office365.ExtendedProperty
+import com.github.lpld.office365.model.{OMessage, ExtendedPropertiesSupport, SingleValueProperty}
+import com.github.lpld.office365.Schema
+import play.api.libs.json.Json
+
+// Define the extended properties, for instance:
+
+// Item class (see https://msdn.microsoft.com/en-us/vba/outlook-vba/articles/item-types-and-message-classes)
+val ItemClassProp = ExtendedProperty("ItemClass", "String 0x1a")
+// `In-Reply-To` internet message header
+val InReplyTo = ExtendedProperty("InReplyTo", "String 0x1042")
+
+// Define a model class that extends `ExtendedPropertiesSupport` trait and `SingleValueExtendedProperties` field:
+case class MessageExtended(Id: String,
+                           Subject: String,
+                           SingleValueExtendedProperties: List[SingleValueProperty])
+  extends OMessage with ExtendedPropertiesSupport {
+  
+  // optionally, you can define getters for your properties:
+  def itemClass: Option[String] = getProp(ItemClassProp)
+}
+
+// Companion object for the item class with extended schema, containing extended properties:
+object MessageExtended {
+  implicit val reads = Json.reads[MessageExtended]
+  implicit val schema = Schema[MessageExtended](ItemClassProp, InReplyTo)
+}
+```
+
+Now, items can be queried in a regular way:
+```scala
+val itemByIdSource = api.get[MessageExtended](itemId)
+// or
+val sentItemsSource = api.from(WellKnownFolder.SentItems).queryAll[MessageExtended]
+
+val item: Option[MessageExtended] = 
+  Await.result(itemByIdSource.runWith(Sink.head), 5.seconds)
+
+// now, read the properties:
+val inReplyTo: Option[String] = item.getProp(InReplyTo)
+// or using previously defined getter:
+val itemClass: Option[String] = item.itemClass
+```
+
+
+
 to be continued...
