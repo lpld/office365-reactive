@@ -1,8 +1,10 @@
-# reactive-office365
+# reactive-office365 
+
+[![Build Status](https://travis-ci.org/lpld/reactive-office365.svg?branch=master)](https://travis-ci.org/lpld/reactive-office365)
 
 **Office365 Rest API** via **Akka Streams** and **Standalone Play WS client**.
 
-Currently, only a limited set of features is supported.
+This is more like a prototype of a library with a limited set of features. Not ready for production.
 
 ## Quick start
 
