@@ -51,7 +51,6 @@ system.terminate()
 ```
 
 
-
 ## Defining a model
 
 Define a case class with a set of fields that are needed. It should extend one of the traits that represent standard Outlook item types: `OMailFolder, OMessage, OCalendarGroup, OCalendar, OEvent, OCalendarView, OCalendarView, OContact, OTaskGroup, OTaskFolder, OTask`:
@@ -79,11 +78,9 @@ object EmailMessage {
 The list of standard fields can be found in the official Office365 API documentation: https://msdn.microsoft.com/en-us/office/office365/api/api-catalog
 
 
-
 ## Querying the API
 
 Methods that represent queries to the API return `Source[I, NotUsed]`, where `I` is a type of requested items. No actuall http requests will be done until the source is materialzed.
-
 
 
 #### Get an item by ID
@@ -102,7 +99,6 @@ This will result in the following request:
 ```
 
 
-
 #### Get multiple items:
 
 ```scala
@@ -119,11 +115,11 @@ This will result in a series of requests to the API, each one loading the next p
 
 ```
 GET /messages
-	?$select=Id,Subject,From,ToRecipients
-	&$filter=ReceivedDateTime ge 2018-01-01T00:10:00Z
-	&$orderby=ReceivedDateTime
-	&$top=100
-	&$skip=0
+        ?$select=Id,Subject,From,ToRecipients
+        &$filter=ReceivedDateTime ge 2018-01-01T00:10:00Z
+        &$orderby=ReceivedDateTime
+        &$top=100
+        &$skip=0
 ```
 
 This method is lazy, in a sense that it does not load additional pages until they are actually needed. It means that the following example will load only the first page of data even if more items are available:
@@ -133,7 +129,6 @@ val items = api.queryAll[EmailMessage]
 
 items.take(1).runForeach(println)
 ```
-
 
 
 #### Get items from a specific folder
@@ -153,8 +148,8 @@ object Event {
 // querying events from a specific calendar folder:
 val calendarId = "<id of the calendar>"
 val events = api
-	.from(FolderType.Calendar, calendarId)
-	.queryAll[Event]
+  .from(FolderType.Calendar, calendarId)
+  .queryAll[Event]
 
 events.runWith(...)
 ```
@@ -168,18 +163,17 @@ GET /calendars/<id of the calendar>/events&$top=100&$skip=0
 , followed by requests to load rest of the pages.
 
 
-
 #### Get messages from a folder with a well-known name
 
 ```scala
 import com.github.lpld.office365.model.WellKnownFolder
 
 val items: Source[EmailMessage, NotUsed] =
-	api
-		.from(WellKnownFolder.SentItems) // mailbox folder with a well-known name
-		.query[EmailMessage](
-          filter = "ReceivedDateTime ge 2018-01-01T00:10:00Z"
-        )
+  api
+    .from(WellKnownFolder.SentItems) // mailbox folder with a well-known name
+    .query[EmailMessage](
+      filter = "ReceivedDateTime ge 2018-01-01T00:10:00Z"
+    )
 
 items.runWith(...)
 ```
@@ -188,10 +182,10 @@ Following request will be executed:
 
 ```
 GET /mailfolders/SentItems/messages
-	?$select=Id,Subject,From,ToRecipients
-    &$filter=ReceivedDateTime ge 2018-01-01T00:10:00Z
-    &$top=100
-    &$skip=0
+        ?$select=Id,Subject,From,ToRecipients
+        &$filter=ReceivedDateTime ge 2018-01-01T00:10:00Z
+        &$top=100
+        &$skip=0
 ```
 
 
