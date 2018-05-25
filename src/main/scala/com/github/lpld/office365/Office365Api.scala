@@ -57,7 +57,7 @@ object Office365Api {
   * @since 14/05/18
   */
 class Office365Api private(lowLevelClient: LowLevelClient, defaultPageSize: Int)
-  extends ItemBox[Folder](lowLevelClient, "", defaultPageSize) {
+  extends ItemBox[Folder](lowLevelClient, None, defaultPageSize) {
 
   def this(httpClient: HttpClient, credential: CredentialData,
            baseUrl: String, defaultPageSize: Int = 100, preferredBodyType: BodyType = BodyType.Html) =
@@ -77,7 +77,7 @@ class Office365Api private(lowLevelClient: LowLevelClient, defaultPageSize: Int)
     * Return ItemBox for a specific folder
     */
   def from[F <: Folder : Api](folderType: FolderType[F], id: String): ItemBox[F] =
-    new ItemBox[F](lowLevelClient, s"${implicitly[Api[F]].path}/$id", defaultPageSize)
+    new ItemBox[F](lowLevelClient, Some((implicitly[Api[F]].path, id)), defaultPageSize)
 
   /**
     * Return ItemBox for mail folder with well-known name
@@ -111,7 +111,7 @@ class Office365Api private(lowLevelClient: LowLevelClient, defaultPageSize: Int)
   *
   * It supports basic operations for manipulating items (for now, only retrieving)
   */
-class ItemBox[F <: Folder](client: LowLevelClient, pathPrefix: String, defaultPageSize: Int = 100) {
+class ItemBox[F <: Folder](client: LowLevelClient, folderInfo: Option[(String, String)], defaultPageSize: Int = 100) {
 
   /**
     * Query multiple items, optionally specifying filter and orderby parameters.
@@ -163,7 +163,10 @@ class ItemBox[F <: Folder](client: LowLevelClient, pathPrefix: String, defaultPa
     })
   }
 
-  private def pathFor[I: Api]: String = pathPrefix + implicitly[Api[I]].path
+  private def pathFor[I: Api]: String =
+    folderInfo
+      .map { case (folder, id) => s"$folder/$id" }
+      .getOrElse("") + implicitly[Api[I]].path
 }
 
 
