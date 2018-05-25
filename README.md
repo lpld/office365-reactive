@@ -1,6 +1,7 @@
 # reactive-office365 
 
 [![Build Status](https://travis-ci.org/lpld/reactive-office365.svg?branch=master)](https://travis-ci.org/lpld/reactive-office365)
+[![codecov](https://codecov.io/gh/lpld/reactive-office365/branch/master/graph/badge.svg)](https://codecov.io/gh/lpld/reactive-office365)
 
 **Office365 Rest API** via **Akka Streams** and **Standalone Play WS client**.
 
